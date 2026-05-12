@@ -1,0 +1,28 @@
+# ============================================================
+# .gitignore — tells GitHub what to never upload
+# ============================================================
+
+# Secret keys — never upload these
+backend/.env
+frontend/.env.local
+
+# Virtual environment — too large and rebuilds automatically
+backend/venv/
+
+# Python cache files — auto-generated, not needed
+__pycache__/
+*.pyc
+*.pyo
+
+# Next.js build folder — auto-generated on deployment
+frontend/.next/
+
+# Node modules — too large and rebuilds automatically
+frontend/node_modules/
+
+# OS files — not needed
+.DS_Store
+Thumbs.db
+
+# VS Code settings — personal preference files
+.vscode/
