@@ -20,6 +20,10 @@ import os
 # This connects us to the Groq AI brain
 from groq import Groq
 
+# This imports our Supabase database client from database.py
+# We created it in a separate file so every feature can import it cleanly
+from database import supabase
+
 # asynccontextmanager lets us run code on startup and shutdown
 from contextlib import asynccontextmanager
 
@@ -70,8 +74,8 @@ async def lifespan(app: FastAPI):
 
     # Print a clear confirmation that the server is running
     print("🚀 AscendAI backend is starting up...")
-    print("📡 Health check at: http://localhost:8000/")
-    print("📚 API docs at:     http://localhost:8000/docs")
+    print("📡 Health check at: http://localhost:8001/")
+    print("📚 API docs at:     http://localhost:8001/docs")
 
     yield  # The app runs here — everything above is startup, below is shutdown
 
