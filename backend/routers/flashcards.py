@@ -253,6 +253,10 @@ class HistoryFlashcard(BaseModel):
     back: str
     # 0-5 mastery score; defaults to 0 for new cards.
     mastery_level: int
+    # UUID of the source note. The frontend uses this as the
+    # grouping key for topics AND as the `note_id` body field
+    # on /quiz/session — DO NOT confuse it with `note_title`.
+    note_id: Optional[str] = None
     # The source-note title (read from the `topic` column).
     # Kept on the response so the frontend can label a topic
     # group without joining back to the notes table.
@@ -826,10 +830,13 @@ def list_by_subject(
         result = (
             supabase
             .table(FLASHCARDS_TABLE)
-            # Columns the response envelope needs. `topic` carries
-            # the source-note title so the frontend can label a
-            # topic group without joining back to the notes table.
-            .select("id, front, back, mastery_level, topic, created_at")
+            # Columns the response envelope needs. `note_id` is
+            # the source-note UUID (the foreign key); `topic`
+            # carries the source-note title so the frontend can
+            # label a topic group without joining back to notes.
+            .select(
+                "id, front, back, mastery_level, note_id, topic, created_at"
+            )
             # Scope to the caller (service role bypasses RLS).
             .eq("user_id", verified_user_id)
             # And to the requested subject.
@@ -855,7 +862,10 @@ def list_by_subject(
                 front=r.get("front") or "",
                 back=r.get("back") or "",
                 mastery_level=int(r.get("mastery_level") or 0),
-                # `topic` is the source-note title.
+                # Source-note UUID and title, kept separate so the
+                # frontend can use the UUID for backend calls and
+                # the title only for display.
+                note_id=(str(r["note_id"]) if r.get("note_id") else None),
                 note_title=r.get("topic"),
                 created_at=str(r.get("created_at") or ""),
             )
@@ -893,7 +903,9 @@ def list_by_note(
         result = (
             supabase
             .table(FLASHCARDS_TABLE)
-            .select("id, front, back, mastery_level, topic, created_at")
+            .select(
+                "id, front, back, mastery_level, note_id, topic, created_at"
+            )
             .eq("user_id", verified_user_id)
             # Filter on the foreign key UUID, not the title text —
             # immutable, so a later note rename can't break this.
@@ -914,6 +926,7 @@ def list_by_note(
                 front=r.get("front") or "",
                 back=r.get("back") or "",
                 mastery_level=int(r.get("mastery_level") or 0),
+                note_id=(str(r["note_id"]) if r.get("note_id") else None),
                 note_title=r.get("topic"),
                 created_at=str(r.get("created_at") or ""),
             )
