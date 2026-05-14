@@ -40,7 +40,7 @@ from contextlib import asynccontextmanager
 # Each feature lives in its own router file under routers/.
 # Importing the module here gives us `homework.router`, which we
 # then bolt onto the FastAPI app below via include_router(...).
-from routers import homework
+from routers import homework, flashcards  # noqa: F401 — registered below
 
 # ============================================================
 # LOAD SECRET KEYS
@@ -153,6 +153,11 @@ app.add_middleware(
 # All authentication, Groq calls and Supabase writes happen
 # inside this router. main.py just mounts it.
 app.include_router(homework.router, prefix="/homework", tags=["Homework"])
+
+# Flashcards — generates Cambridge-style revision cards from a
+# note via Groq, plus two read endpoints for the study UI to
+# fetch saved cards by subject or by source note.
+app.include_router(flashcards.router, prefix="/flashcards", tags=["Flashcards"])
 
 # ============================================================
 # HOMEWORK ASSISTANT — configuration
