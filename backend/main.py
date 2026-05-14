@@ -40,7 +40,7 @@ from contextlib import asynccontextmanager
 # Each feature lives in its own router file under routers/.
 # Importing the module here gives us `homework.router`, which we
 # then bolt onto the FastAPI app below via include_router(...).
-from routers import homework, flashcards, quiz, timetable  # noqa: F401 — registered below
+from routers import homework, flashcards, quiz, timetable, onboarding  # noqa: F401 — registered below
 
 # ============================================================
 # LOAD SECRET KEYS
@@ -169,6 +169,17 @@ app.include_router(quiz.router, prefix="/quiz", tags=["Quiz"])
 # POST /timetable/generate, GET /timetable/entries,
 # PATCH /timetable/entry/{entry_id}/complete.
 app.include_router(timetable.router, prefix="/timetable", tags=["Timetable"])
+
+# Onboarding — writes the five-step wizard's data through to
+# Supabase so the Timetable feature (and any future feature
+# that needs profile.study_*_time or subjects.exam_date) can
+# find it. Three endpoints:
+# POST /onboarding/profile         (called from Step 3),
+# POST /onboarding/exam-dates      (called from Step 2),
+# GET  /onboarding/profile/check   (called from the dashboard
+#                                   as a safety net to repair
+#                                   a missing profile row).
+app.include_router(onboarding.router, prefix="/onboarding", tags=["Onboarding"])
 
 # ============================================================
 # HOMEWORK ASSISTANT — configuration
