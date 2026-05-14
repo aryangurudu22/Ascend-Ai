@@ -40,7 +40,7 @@ from contextlib import asynccontextmanager
 # Each feature lives in its own router file under routers/.
 # Importing the module here gives us `homework.router`, which we
 # then bolt onto the FastAPI app below via include_router(...).
-from routers import homework, flashcards, quiz  # noqa: F401 — registered below
+from routers import homework, flashcards, quiz, timetable  # noqa: F401 — registered below
 
 # ============================================================
 # LOAD SECRET KEYS
@@ -162,6 +162,13 @@ app.include_router(flashcards.router, prefix="/flashcards", tags=["Flashcards"])
 # Quiz — records each quiz attempt + every per-card answer,
 # applies the +1/-1 mastery clamp, and returns history.
 app.include_router(quiz.router, prefix="/quiz", tags=["Quiz"])
+
+# Timetable — generates a 2-week Cambridge revision schedule
+# via Groq, plus list + toggle-complete endpoints for the
+# weekly grid + daily detail views. Three endpoints:
+# POST /timetable/generate, GET /timetable/entries,
+# PATCH /timetable/entry/{entry_id}/complete.
+app.include_router(timetable.router, prefix="/timetable", tags=["Timetable"])
 
 # ============================================================
 # HOMEWORK ASSISTANT — configuration
