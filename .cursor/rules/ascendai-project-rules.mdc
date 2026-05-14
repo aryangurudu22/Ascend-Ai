@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+This is the AscendAI project — a premium Cambridge AS Level AI Study Assistant. Always read CURSOR.md in the project root before responding. Frontend port 3001, backend port 8001. All colours from tailwind.config.js only — never raw hex or rgba values. Tailwind v3 only. Supabase auth uses @supabase/ssr. All new backend endpoints go in separate router files, never directly in main.py. Virtual environment: .\venv\Scripts\activate

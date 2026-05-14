@@ -48,5 +48,8 @@ if not SUPABASE_SERVICE_ROLE_KEY:
 # This opens a permanent connection to our database
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-# Print a confirmation so we know it worked when the server starts
-print("✅ Supabase client created successfully")
+# Print a confirmation so we know it worked when the server starts.
+# Uses ASCII "[OK]" instead of an emoji because Windows' default
+# console codec (cp1252) cannot encode many Unicode glyphs and would
+# crash uvicorn on startup with a UnicodeEncodeError.
+print("[OK] Supabase client created successfully")
