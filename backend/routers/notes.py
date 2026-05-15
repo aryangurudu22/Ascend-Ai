@@ -22,6 +22,10 @@
 #     • Returns paginated notes for the signed-in student,
 #       with subject name + code joined from `subjects`.
 #
+#   GET /classroom/posts  (mounted at /classroom via main.py)
+#     • Reads stored Google tokens from `profiles`.
+#     • Fetches active Classroom courses + recent announcements.
+#
 # WHAT TABLE WE WRITE TO
 # ------------------------------------------------------------
 # • `notes` — id, user_id, subject_id, google_post_id, title,
@@ -40,7 +44,7 @@ import json
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -68,7 +72,15 @@ GROQ_TEMPERATURE = 0.3
 # Table names — single place to rename later.
 NOTES_TABLE = "notes"
 SUBJECTS_TABLE = "subjects"
+PROFILES_TABLE = "profiles"
 CLASSROOM_POSTS_TABLE = "google_classroom_posts"
+
+# Google OAuth client credentials — from backend/.env.
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID") or ""
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET") or ""
+
+# Google access tokens expire after one hour (seconds).
+GOOGLE_ACCESS_TOKEN_SECONDS = 3600
 
 # Allowed source_type values from n8n / Classroom.
 ALLOWED_SOURCE_TYPES = ("text", "youtube", "drive", "pdf")
@@ -93,6 +105,10 @@ _YOUTUBE_EMBED_RE = re.compile(
 )
 
 router = APIRouter()
+
+# Separate router so main.py can mount GET /classroom/posts exactly
+# as specified (prefix="/classroom") while note CRUD stays on /notes.
+classroom_router = APIRouter()
 
 
 # ============================================================
@@ -882,3 +898,324 @@ def list_notes(
         )
 
     return NotesListResponse(data=items, total=total)
+
+
+# ============================================================
+# CLASSROOM — Pydantic models (GET /classroom/posts)
+# ============================================================
+
+
+class ClassroomPostItem(BaseModel):
+    post_id: str
+    course_id: str
+    course_name: str
+    text: str
+    materials: List[Dict[str, Any]]
+    created_time: str
+
+
+class ClassroomPostsResponse(BaseModel):
+    data: List[ClassroomPostItem]
+
+
+# ============================================================
+# HELPER: _parse_profile_expiry
+# ============================================================
+def _parse_profile_expiry(raw: Any) -> datetime:
+    if not raw:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if isinstance(raw, datetime):
+        dt = raw
+    else:
+        text = str(raw).strip().replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(text)
+        except ValueError:
+            return datetime.min.replace(tzinfo=timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+# ============================================================
+# HELPER: _fetch_profile_google_tokens
+# ============================================================
+def _fetch_profile_google_tokens(user_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        result = (
+            supabase.table(PROFILES_TABLE)
+            .select(
+                "user_id, google_access_token, google_refresh_token, "
+                "google_token_expiry"
+            )
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(result, "data", None) or []
+        return rows[0] if rows else None
+    except Exception as e:
+        print(f"[Notes] Profile token fetch failed: {type(e).__name__}: {e}")
+        return None
+
+
+# ============================================================
+# HELPER: _save_refreshed_tokens
+# ============================================================
+def _save_refreshed_tokens(user_id: str, access_token: str) -> None:
+    expiry = datetime.now(timezone.utc) + timedelta(seconds=GOOGLE_ACCESS_TOKEN_SECONDS)
+    try:
+        supabase.table(PROFILES_TABLE).update(
+            {
+                "google_access_token": access_token,
+                "google_token_expiry": expiry.isoformat(),
+                "updated_at": _now_iso(),
+            }
+        ).eq("user_id", user_id).execute()
+    except Exception as e:
+        print(f"[Notes] Refreshed token save failed: {type(e).__name__}: {e}")
+
+
+# ============================================================
+# HELPER: _get_valid_google_access_token
+# ============================================================
+# Access tokens expire every hour. We use the refresh token to get
+# a new one automatically without asking Aisha to log in again.
+# ============================================================
+def _get_valid_google_access_token(profile: Dict[str, Any]) -> str:
+    access = (profile.get("google_access_token") or "").strip()
+    refresh = (profile.get("google_refresh_token") or "").strip()
+    expiry = _parse_profile_expiry(profile.get("google_token_expiry"))
+    user_id = str(profile.get("user_id") or "")
+
+    now = datetime.now(timezone.utc)
+    if access and expiry > now:
+        return access
+
+    if not refresh:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": (
+                    "Google session expired. Please sign out and "
+                    "sign in again to reconnect Classroom."
+                )
+            },
+        )
+
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        print("[Notes] GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET missing.")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "Google OAuth is not configured on the server."},
+        )
+
+    try:
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
+
+        creds = Credentials(
+            token=access or None,
+            refresh_token=refresh,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=GOOGLE_CLIENT_ID,
+            client_secret=GOOGLE_CLIENT_SECRET,
+        )
+
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            if creds.token and user_id:
+                _save_refreshed_tokens(user_id, creds.token)
+            return str(creds.token or "")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Notes] Google token refresh failed: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": (
+                    "Google session expired. Please sign out and "
+                    "sign in again to reconnect Classroom."
+                )
+            },
+        ) from e
+
+    if access:
+        return access
+
+    raise HTTPException(
+        status_code=401,
+        detail={
+            "error": (
+                "Google session expired. Please sign out and "
+                "sign in again to reconnect Classroom."
+            )
+        },
+    )
+
+
+# ============================================================
+# HELPER: _extract_announcement_materials
+# ============================================================
+def _extract_announcement_materials(materials: Any) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    if not isinstance(materials, list):
+        return items
+
+    for material in materials:
+        if not isinstance(material, dict):
+            continue
+        if "link" in material and isinstance(material["link"], dict):
+            link = material["link"]
+            items.append(
+                {
+                    "type": "link",
+                    "title": str(link.get("title") or ""),
+                    "url": str(link.get("url") or ""),
+                }
+            )
+        if "driveFile" in material and isinstance(material["driveFile"], dict):
+            drive = material["driveFile"]
+            drive_meta = drive.get("driveFile") if isinstance(drive.get("driveFile"), dict) else {}
+            items.append(
+                {
+                    "type": "drive",
+                    "title": str(drive_meta.get("title") or ""),
+                    "url": str(drive_meta.get("alternateLink") or ""),
+                }
+            )
+        if "youtubeVideo" in material and isinstance(material["youtubeVideo"], dict):
+            video = material["youtubeVideo"]
+            video_id = str(video.get("id") or "")
+            items.append(
+                {
+                    "type": "youtube",
+                    "title": str(video.get("title") or ""),
+                    "url": (
+                        f"https://www.youtube.com/watch?v={video_id}"
+                        if video_id
+                        else ""
+                    ),
+                }
+            )
+    return items
+
+
+# ============================================================
+# ENDPOINT: GET /classroom/posts
+# ============================================================
+@classroom_router.get(
+    "/posts",
+    response_model=ClassroomPostsResponse,
+    summary="Fetch recent Google Classroom announcements for the student",
+)
+def get_classroom_posts(
+    user_id: str = Query(..., description="UUID of the student"),
+    max_results: int = Query(default=10, ge=1, le=50),
+    verified_user_id: str = Depends(verify_bearer_token),
+):
+    if user_id.strip() != verified_user_id.strip():
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "Unauthorised — please log in"},
+        )
+
+    # STEP 1 — load Google tokens from profiles.
+    profile = _fetch_profile_google_tokens(verified_user_id)
+    if not profile:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "Profile not found"},
+        )
+
+    access_token = (profile.get("google_access_token") or "").strip()
+    refresh_token = (profile.get("google_refresh_token") or "").strip()
+    if not access_token and not refresh_token:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": (
+                    "Google Classroom not connected. "
+                    "Please reconnect your Google account."
+                )
+            },
+        )
+
+    # STEP 2 — refresh the access token when it has expired.
+    valid_access = _get_valid_google_access_token(profile)
+
+    # STEP 3 — build the Classroom API client.
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(token=valid_access)
+        classroom_service = build("classroom", "v1", credentials=creds)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Notes] Classroom client build failed: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "Could not connect to Google Classroom."},
+        ) from e
+
+    posts: List[ClassroomPostItem] = []
+
+    try:
+        # Fetch all active courses Aisha is enrolled in.
+        courses_response = (
+            classroom_service.courses()
+            .list(courseStates=["ACTIVE"])
+            .execute()
+        )
+        courses = courses_response.get("courses") or []
+    except Exception as e:
+        print(f"[Notes] Classroom courses.list failed: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "Could not fetch Google Classroom courses."},
+        ) from e
+
+    for course in courses:
+        course_id = str(course.get("id") or "")
+        course_name = str(course.get("name") or "Untitled course")
+        if not course_id:
+            continue
+
+        try:
+            # Fetch teacher announcements from each course.
+            announcements_response = (
+                classroom_service.courses()
+                .announcements()
+                .list(courseId=course_id, pageSize=max_results)
+                .execute()
+            )
+            announcements = announcements_response.get("announcements") or []
+        except Exception as e:
+            print(
+                f"[Notes] announcements.list failed for {course_id!r}: "
+                f"{type(e).__name__}: {e}"
+            )
+            continue
+
+        for announcement in announcements:
+            posts.append(
+                ClassroomPostItem(
+                    post_id=str(announcement.get("id") or ""),
+                    course_id=course_id,
+                    course_name=course_name,
+                    text=str(announcement.get("text") or ""),
+                    materials=_extract_announcement_materials(
+                        announcement.get("materials")
+                    ),
+                    created_time=str(
+                        announcement.get("creationTime")
+                        or announcement.get("updateTime")
+                        or ""
+                    ),
+                )
+            )
+
+    return ClassroomPostsResponse(data=posts)

@@ -40,7 +40,7 @@ from contextlib import asynccontextmanager
 # Each feature lives in its own router file under routers/.
 # Importing the module here gives us `homework.router`, which we
 # then bolt onto the FastAPI app below via include_router(...).
-from routers import homework, flashcards, quiz, timetable, onboarding, past_papers, notes  # noqa: F401 — registered below
+from routers import homework, flashcards, quiz, timetable, onboarding, past_papers, notes, auth  # noqa: F401 — registered below
 
 # ============================================================
 # LOAD SECRET KEYS
@@ -204,6 +204,15 @@ app.include_router(past_papers.router, prefix="/past-papers", tags=["Past Papers
 # POST /notes/sync       (called by the Notes page Sync Now button),
 # GET  /notes/list       (drives the Notes page grid).
 app.include_router(notes.router, prefix="/notes", tags=["Notes"])
+
+# Google OAuth token persistence — called from the auth callback
+# after login so Classroom / Drive / YouTube scopes are stored
+# on the student's profile row.
+app.include_router(auth.router, prefix="/auth", tags=["Auth"])
+
+# Google Classroom read API — lives in notes.py but mounted at
+# /classroom so n8n and /docs show GET /classroom/posts.
+app.include_router(notes.classroom_router, prefix="/classroom", tags=["Notes"])
 
 # ============================================================
 # HOMEWORK ASSISTANT — configuration
