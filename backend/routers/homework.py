@@ -63,7 +63,7 @@
 # from the backend .env file. `Optional[X]` lets a Pydantic field
 # be either an X or None.
 import os
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 # ── FastAPI imports ──────────────────────────────────────────
 # APIRouter is the mini-FastAPI we attach to the main app via
@@ -285,6 +285,77 @@ class HistoryResponse(BaseModel):
 
 
 # ============================================================
+# ADJUSTMENT ENDPOINT — request / response models
+# ============================================================
+
+ALLOWED_ADJUSTMENT_TYPES: List[str] = [
+    "simplify",
+    "more_detail",
+    "shorten",
+    "add_examples",
+]
+
+
+class HomeworkAdjustRequest(BaseModel):
+    """JSON body the frontend POSTs to /homework/adjust."""
+
+    # UUID of the saved row — when set we UPDATE homework_questions
+    # so History shows the refined answer.
+    question_id: Optional[str] = Field(
+        default=None,
+        description="Optional UUID of the saved homework_questions row.",
+    )
+    # Original question text — keeps Groq on-topic.
+    question: str = Field(
+        ...,
+        min_length=10,
+        max_length=2000,
+        description="Original homework question (10-2000 chars).",
+    )
+    # Full answer currently on screen — Groq rewrites this text.
+    current_answer: str = Field(
+        ...,
+        min_length=1,
+        max_length=12000,
+        description="The answer text to refine (plain text).",
+    )
+    # Which refinement button was tapped (validated against ALLOWED_*).
+    adjustment_type: str = Field(
+        ...,
+        min_length=1,
+        max_length=32,
+        description="simplify | more_detail | shorten | add_examples",
+    )
+    # Display name for the prompt header (e.g. Economics).
+    subject: str = Field(
+        ...,
+        min_length=1,
+        description="Display name of the subject.",
+    )
+    # Cambridge syllabus code (e.g. 9708).
+    subject_code: str = Field(
+        ...,
+        min_length=1,
+        description="Cambridge syllabus code.",
+    )
+    # Must match the bearer token user_id.
+    user_id: str = Field(
+        ...,
+        min_length=1,
+        description="UUID of the authenticated user (must match token).",
+    )
+
+
+class HomeworkAdjustResponse(BaseModel):
+    """JSON body returned by POST /homework/adjust on success."""
+
+    adjusted_answer: str
+    adjustment_type: str
+    topic_tag: Optional[str] = None
+    saved: bool
+
+
+# ============================================================
 # HELPER: extract_topic_tag
 # ============================================================
 # The system prompt asks the model to append exactly one line at
@@ -357,6 +428,102 @@ def extract_topic_tag(text: str) -> Tuple[str, Optional[str]]:
     cleaned = "\n".join(kept_lines).rstrip()
 
     return (cleaned, topic_tag)
+
+
+# ============================================================
+# HELPER: get_adjustment_prompt
+# ============================================================
+def get_adjustment_prompt(
+    adjustment_type: str,
+    current_answer: str,
+    question: str,
+    subject_name: str,
+    subject_code: str,
+) -> str:
+    q = (question or "").strip()
+    ans = (current_answer or "").strip()
+    subj = (subject_name or "the subject").strip()
+    code = (subject_code or "").strip()
+
+    if adjustment_type == "simplify":
+        return (
+            "You are a Cambridge AS Level tutor simplifying an answer for "
+            "a student in Zambia who found the original too complex.\n\n"
+            f"Original question: {q}\n"
+            f"Subject: {subj} ({code})\n\n"
+            "Rewrite the answer below in simpler, clearer language.\n"
+            "Use shorter sentences. Define any technical terms when first used.\n"
+            "Keep all the key Cambridge concepts but make them more accessible.\n"
+            "Maintain the same structure: DEFINITION, CAMBRIDGE ANSWER, "
+            "EXAMINER TIP, COMMON MISTAKES.\n"
+            "Do not use markdown symbols. Write in plain paragraphs only.\n"
+            "The simplified answer must still be Cambridge-standard quality.\n\n"
+            "Original answer to simplify:\n"
+            f"{ans}"
+        )
+
+    if adjustment_type == "more_detail":
+        return (
+            "You are a Cambridge AS Level examiner expanding an answer for "
+            "a student in Zambia who wants deeper understanding.\n\n"
+            f"Original question: {q}\n"
+            f"Subject: {subj} ({code})\n\n"
+            "Expand the answer below with significantly more depth and detail.\n"
+            "Add more economic/business theory where relevant.\n"
+            "Include additional real-world examples from Zambia and Africa "
+            "(MTN, Airtel, Shoprite, Zambia national economy).\n"
+            "Strengthen the analysis and evaluation sections.\n"
+            "For every point made — add a further developed explanation.\n"
+            "Maintain the same structure: DEFINITION, CAMBRIDGE ANSWER, "
+            "EXAMINER TIP, COMMON MISTAKES.\n"
+            "Do not use markdown symbols. Write in plain paragraphs only.\n\n"
+            "Original answer to expand:\n"
+            f"{ans}"
+        )
+
+    if adjustment_type == "shorten":
+        return (
+            "You are a Cambridge AS Level examiner condensing an answer "
+            "for a student in Zambia who needs a more concise version.\n\n"
+            f"Original question: {q}\n"
+            f"Subject: {subj} ({code})\n\n"
+            "Shorten the answer below to its most essential points only.\n"
+            "Keep the core Cambridge definition and key analysis points.\n"
+            "Remove any repetition or over-explanation.\n"
+            "Target: approximately half the current length.\n"
+            "Maintain the same structure: DEFINITION, CAMBRIDGE ANSWER, "
+            "EXAMINER TIP, COMMON MISTAKES — but each section shorter.\n"
+            "Do not use markdown symbols. Write in plain paragraphs only.\n"
+            "The shortened answer must still score well in Cambridge exams.\n\n"
+            "Original answer to shorten:\n"
+            f"{ans}"
+        )
+
+    if adjustment_type == "add_examples":
+        return (
+            "You are a Cambridge AS Level tutor enriching an answer for "
+            "a student in Zambia with more real-world examples.\n\n"
+            f"Original question: {q}\n"
+            f"Subject: {subj} ({code})\n\n"
+            "Rewrite the answer below adding significantly more real-world "
+            "examples throughout.\n\n"
+            "Prioritise examples from:\n"
+            "- Zambia: Zambia National Commercial Bank, Shoprite Zambia, "
+            "Airtel Zambia, MTN Zambia, Zambia Revenue Authority, "
+            "Zambia's copper mining industry, Bank of Zambia\n"
+            "- Africa: Safaricom Kenya, Dangote Group Nigeria, MTN Group, "
+            "Equity Bank, African Development Bank\n"
+            "- Global: Apple, Amazon, Tesla, Toyota, Unilever, Coca-Cola, "
+            "McDonald's\n\n"
+            "For every theoretical point — add a specific named example.\n"
+            "Maintain the same structure: DEFINITION, CAMBRIDGE ANSWER, "
+            "EXAMINER TIP, COMMON MISTAKES.\n"
+            "Do not use markdown symbols. Write in plain paragraphs only.\n\n"
+            "Original answer to enrich with examples:\n"
+            f"{ans}"
+        )
+
+    return ""
 
 
 # ============================================================
@@ -909,4 +1076,164 @@ def homework_history(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+# ============================================================
+# ENDPOINT: POST /homework/adjust
+# ============================================================
+# END-TO-END FLOW:
+#   1. Validate body (Pydantic) + bearer token (dependency).
+#   2. Reject invalid adjustment_type with 422 listing valid values.
+#   3. Identity check: body.user_id must match verified token.
+#   4. Build the adjustment-specific Groq prompt via
+#      get_adjustment_prompt(...).
+#   5. Call Groq (llama-3.3-70b-versatile, 2048 tokens, 0.3 temp).
+#   6. extract_topic_tag on the reply.
+#   7. If question_id provided → UPDATE homework_questions row.
+#   8. Return { adjusted_answer, adjustment_type, topic_tag, saved }.
+# ============================================================
+@router.post(
+    "/adjust",
+    response_model=HomeworkAdjustResponse,
+    summary="Refine an existing homework answer (simplify, expand, etc.).",
+)
+def adjust_homework(
+    body: HomeworkAdjustRequest,
+    # Same bearer-token gate as /homework/ask — unauthenticated
+    # callers never reach Groq or Supabase.
+    verified_user_id: str = Depends(verify_bearer_token),
+):
+    # ── STEP 1: validate adjustment_type. ──────────────────
+    # Pydantic only checks that the field is a non-empty string;
+    # we enforce the allowed enum here so the client gets a
+    # helpful 422 that lists every valid option.
+    adj_type = (body.adjustment_type or "").strip().lower()
+    if adj_type not in ALLOWED_ADJUSTMENT_TYPES:
+        allowed = ", ".join(ALLOWED_ADJUSTMENT_TYPES)
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": (
+                    f"Invalid adjustment_type '{body.adjustment_type}'. "
+                    f"Must be one of: {allowed}"
+                )
+            },
+        )
+
+    # ── STEP 2: identity check (same as /ask). ───────────────
+    if body.user_id.strip() != verified_user_id.strip():
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "Unauthorised — please log in"},
+        )
+
+    # ── STEP 3: build the Groq prompt for this button. ───────
+    system_style_prompt = get_adjustment_prompt(
+        adjustment_type=adj_type,
+        current_answer=body.current_answer,
+        question=body.question,
+        subject_name=body.subject,
+        subject_code=body.subject_code,
+    )
+    if not system_style_prompt:
+        # Defensive — validation should have caught unknown types.
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "Could not build adjustment prompt."},
+        )
+
+    # ── STEP 4: call Groq. ───────────────────────────────────
+    try:
+        from main import groq_client  # noqa: WPS433
+    except Exception as e:
+        print(f"[Homework] groq_client import failed: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "AI service unavailable. Please try again."},
+        )
+
+    try:
+        completion = groq_client.chat.completions.create(
+            # MODEL — same llama-3.3-70b-versatile as /homework/ask so
+            # refinement quality matches the original answer style.
+            model=GROQ_MODEL,
+            messages=[
+                # Single user message — the adjustment template
+                # already embeds persona + rules + the answer to edit.
+                {"role": "user", "content": system_style_prompt},
+            ],
+            # MAX TOKENS — 2048 matches the spec; enough for a full
+            # four-section rewrite without truncating mid-answer.
+            max_tokens=GROQ_MAX_TOKENS,
+            # TEMPERATURE — 0.3 keeps refinements consistent and
+            # exam-appropriate (same value as /homework/ask).
+            temperature=GROQ_TEMPERATURE,
+        )
+    except Exception as e:
+        print(f"[Homework] Groq adjust call failed: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "AI service unavailable. Please try again."},
+        )
+
+    # ── STEP 5: parse Groq output. ───────────────────────────
+    try:
+        raw_answer = completion.choices[0].message.content or ""
+    except (AttributeError, IndexError) as e:
+        print(f"[Homework] Groq adjust response shape unexpected: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "AI service unavailable. Please try again."},
+        )
+
+    cleaned_answer, topic_tag = extract_topic_tag(raw_answer)
+
+    # ── STEP 6: optionally UPDATE the saved row. ─────────────
+    saved = False
+    qid = (body.question_id or "").strip()
+    if qid:
+        try:
+            # Update the saved record so History shows the latest
+            # adjusted version (answer + re-extracted topic_tag).
+            update_payload = {
+                "answer": cleaned_answer,
+                "topic_tag": topic_tag,
+            }
+            result = (
+                supabase.table(HOMEWORK_TABLE)
+                .update(update_payload)
+                .eq("id", qid)
+                .eq("user_id", verified_user_id)
+                .execute()
+            )
+            rows = getattr(result, "data", None)
+            if isinstance(rows, list) and len(rows) > 0:
+                saved = True
+            elif isinstance(result, dict):
+                inner = result.get("data") or []
+                if inner:
+                    saved = True
+            if not saved:
+                print(
+                    f"[Homework] adjust UPDATE returned no rows for "
+                    f"question_id={qid}"
+                )
+        except Exception as e:
+            # Log but still return the adjusted answer — the student
+            # should see the refinement even if the DB write fails.
+            print(
+                f"[Homework] adjust Supabase UPDATE failed: "
+                f"{type(e).__name__}: {e}"
+            )
+            saved = False
+    # If question_id is null we skip the save silently — the
+    # frontend may not have a saved row yet (saved=false on /ask).
+
+    # ── STEP 7: respond. ─────────────────────────────────────
+    return HomeworkAdjustResponse(
+        adjusted_answer=cleaned_answer,
+        adjustment_type=adj_type,
+        topic_tag=topic_tag,
+        saved=saved,
     )

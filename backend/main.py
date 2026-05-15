@@ -40,7 +40,7 @@ from contextlib import asynccontextmanager
 # Each feature lives in its own router file under routers/.
 # Importing the module here gives us `homework.router`, which we
 # then bolt onto the FastAPI app below via include_router(...).
-from routers import homework, flashcards, quiz, timetable, onboarding  # noqa: F401 — registered below
+from routers import homework, flashcards, quiz, timetable, onboarding, past_papers  # noqa: F401 — registered below
 
 # ============================================================
 # LOAD SECRET KEYS
@@ -180,6 +180,22 @@ app.include_router(timetable.router, prefix="/timetable", tags=["Timetable"])
 #                                   as a safety net to repair
 #                                   a missing profile row).
 app.include_router(onboarding.router, prefix="/onboarding", tags=["Onboarding"])
+
+# Past Papers — downloads an uploaded Cambridge AS Level past
+# paper PDF from Supabase Storage, extracts text with PyMuPDF,
+# asks Groq for a structured Cambridge solution, saves the
+# solution onto the past_papers row, and (in the background)
+# generates per-topic study notes the student doesn't already
+# have. Three endpoints:
+# POST /past-papers/solve              (called by the UPLOAD
+#                                       handler in the frontend
+#                                       once the PDF is in
+#                                       Supabase Storage),
+# GET  /past-papers/list               (drives VIEW 1's library
+#                                       grid),
+# GET  /past-papers/{paper_id}/solution(drives VIEW 4 when the
+#                                       user re-opens a paper).
+app.include_router(past_papers.router, prefix="/past-papers", tags=["Past Papers"])
 
 # ============================================================
 # HOMEWORK ASSISTANT — configuration
