@@ -33,7 +33,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { motion, useInView } from "framer-motion";
 import {
   ArrowLeft,
   BookOpen,
@@ -46,11 +48,12 @@ import {
   TrendingUp,
   X,
   XCircle,
+  Zap,
 } from "lucide-react";
 import { supabase } from "../../../lib/supabaseClient";
 import { SUBJECTS } from "../../../lib/subjects";
-import PageHeader from "../../components/PageHeader";
 import SubjectBadge from "../../components/SubjectBadge";
+import { staggerContainer, staggerItem } from "../../lib/animations";
 
 
 // ─────────────────────────────────────────────────────────────
@@ -783,30 +786,54 @@ function buildTopicsForSubject(subjectId, flashcards, notes) {
 // literal strings so the JIT keeps the CSS in the final bundle.
 // Used to paint the 3 px subject-coloured left edge on the
 // flashcard subject cards (audit Task 4 + Task 6).
-const SUBJECT_LEFT_BORDER_CLASS = {
-  economics: "border-l-economics-text",
-  business:  "border-l-business-text",
-  english:   "border-l-english-text",
-  ict:       "border-l-ict-text",
+const SUBJECT_LEFT_BORDER_VAR = {
+  economics: "var(--econ-accent)",
+  business: "var(--biz-accent)",
+  english: "var(--eng-accent)",
+  ict: "var(--ict-accent)",
 };
+
+const SUBJECT_FILL_VAR = {
+  economics: "var(--econ-text)",
+  business: "var(--biz-text)",
+  english: "var(--eng-text)",
+  ict: "var(--ict-text)",
+};
+
+const CARD_BORDER_STYLE = "0.5px solid var(--gold-border)";
+
+function getTopicNamesForSubject(subjectId, cards, noteTitles, max = 3) {
+  const topics = buildTopicsForSubject(subjectId, cards, noteTitles);
+  return topics.slice(0, max).map((t) => t.title);
+}
 
 // MasteryBar: 4-pixel-tall progress bar showing average mastery
 // as a percentage of the 0-to-5 scale. Background = hover token,
 // fill = gold token, both from tailwind.config.js.
-function MasteryBar({ value }) {
-  // Clamp safely so a malformed mastery value can't blow out
-  // the layout (e.g. width: -50%).
-  const pct = Math.max(0, Math.min(100, (value / MASTERY_MAX) * 100));
+function MasteryBar({ value, masteryPercent, fillColor = "var(--gold)" }) {
+  const pct =
+    masteryPercent != null
+      ? Math.max(0, Math.min(100, Number(masteryPercent) || 0))
+      : Math.max(0, Math.min(100, ((Number(value) || 0) / MASTERY_MAX) * 100));
   return (
-    <div className="h-1 w-full bg-hover rounded-full overflow-hidden">
+    <div
+      style={{
+        height: "4px",
+        width: "100%",
+        background: "var(--border)",
+        borderRadius: "2px",
+        overflow: "hidden",
+        flexShrink: 0,
+      }}
+    >
       <div
-        className="h-full bg-gold transition-[width] duration-300 ease-out"
-        // Tailwind cannot express dynamic numeric widths, so we
-        // use an arbitrary-value class via the style prop. Note
-        // this is NOT a hex/colour inline style — it is a single
-        // numeric width that drives the % fill. Colours stay in
-        // tokens.
-        style={{ width: `${pct}%` }}
+        style={{
+          height: "4px",
+          borderRadius: "2px",
+          width: `${pct}%`,
+          background: fillColor,
+          transition: "width 600ms ease",
+        }}
       />
     </div>
   );
@@ -817,12 +844,71 @@ function MasteryBar({ value }) {
 // four of these so the layout is stable when real data arrives.
 function SkeletonSubjectCard() {
   return (
-    <div className="bg-card border border-input-border rounded-4px p-5 shadow-sm animate-pulse">
-      <div className="h-4 w-16 bg-hover rounded-4px mb-3" />
-      <div className="h-6 w-3/4 bg-hover rounded-4px mb-2" />
-      <div className="h-3 w-1/3 bg-hover rounded-4px mb-4" />
-      <div className="h-3 w-full bg-hover rounded-4px mb-2" />
-      <div className="h-1 w-full bg-hover rounded-full" />
+    <div
+      style={{
+        background: "var(--card)",
+        border: CARD_BORDER_STYLE,
+        borderRadius: "10px",
+        padding: "20px",
+        animation: "flashcards-pulse 1.5s ease-in-out infinite",
+      }}
+    >
+      <div style={{ width: "48px", height: "12px", background: "var(--card-hover)", borderRadius: "4px", marginBottom: "12px" }} />
+      <div style={{ width: "40%", height: "10px", background: "var(--card-hover)", borderRadius: "4px", marginBottom: "16px" }} />
+      <div style={{ width: "100%", height: "4px", background: "var(--card-hover)", borderRadius: "2px" }} />
+    </div>
+  );
+}
+
+function SubjectEmptyPrompt({ onGenerate }) {
+  return (
+    <div style={{ marginTop: "auto", textAlign: "center" }}>
+      <p style={{ fontFamily: "Inter, sans-serif", fontSize: "12px", color: "var(--text-muted)", marginBottom: "10px" }}>
+        No cards yet for this subject
+      </p>
+      <button
+        type="button"
+        onClick={onGenerate}
+        style={{
+          background: "var(--gold)",
+          border: "none",
+          borderRadius: "6px",
+          padding: "8px 14px",
+          fontFamily: "Inter, sans-serif",
+          fontSize: "12px",
+          fontWeight: 500,
+          color: "var(--bg)",
+          cursor: "pointer",
+        }}
+      >
+        Generate Cards
+      </button>
+    </div>
+  );
+}
+
+function FlashcardsBreadcrumb() {
+  return (
+    <div style={{ padding: "16px var(--page-padding) 0", display: "flex", alignItems: "center", gap: "8px" }}>
+      <Link
+        href="/dashboard"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          fontFamily: "Inter, sans-serif",
+          fontSize: "13px",
+          color: "var(--text-muted)",
+          textDecoration: "none",
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <path d="M19 12H5M12 19l-7-7 7-7" />
+        </svg>
+        Dashboard
+      </Link>
+      <span style={{ color: "var(--text-muted)", fontSize: "13px" }}>/</span>
+      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-dim)" }}>My Flashcards</span>
     </div>
   );
 }
@@ -1880,7 +1966,7 @@ export default function FlashcardsPage() {
     }
   };
 
-  // handleRetakeQuiz: VIEW 5 "Retake quiz" button.
+  // handleRetakeQuiz: VIEW 5 "Retake Quiz" button.
   //
   // Two principles combine here:
   //   1. SPACED REPETITION — the cards Aisha just got WRONG
@@ -2171,6 +2257,25 @@ export default function FlashcardsPage() {
   );
 
 
+  const subjectsGridRef = useRef(null);
+  const subjectsInView = useInView(subjectsGridRef, { once: true, margin: "-40px" });
+
+  const progressSummary = useMemo(() => {
+    const all = flashcards;
+    const total = all.length;
+    const dueToday = all.filter((c) => (Number(c.mastery_level) || 0) < 3).length;
+    const masteryPct =
+      total > 0
+        ? Math.round(
+            (all.reduce((acc, c) => acc + (Number(c.mastery_level) || 0), 0) /
+              total /
+              MASTERY_MAX) *
+              100
+          )
+        : 0;
+    return { total, dueToday, masteryPct };
+  }, [flashcards]);
+
   // ───────────────────────────────────────────────────────────
   // EARLY RENDER GATE — show nothing meaningful until auth
   // has been verified. The proxy redirect arrives a few ms
@@ -2178,8 +2283,18 @@ export default function FlashcardsPage() {
   // ───────────────────────────────────────────────────────────
   if (!authReady) {
     return (
-      <main className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-text-muted text-sm">Loading…</div>
+      <main
+        style={{
+          minHeight: "100vh",
+          background: "var(--bg)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "14px", color: "var(--text-muted)" }}>
+          Loading…
+        </p>
       </main>
     );
   }
@@ -2191,8 +2306,9 @@ export default function FlashcardsPage() {
   // background + padding consistent across all five screens.
   // ───────────────────────────────────────────────────────────
   return (
-    <main className="min-h-screen bg-background py-6 px-4 sm:px-8">
-      <div className="max-w-7xl mx-auto">
+    <main style={{ minHeight: "100vh", background: "var(--bg)" }}>
+      <FlashcardsBreadcrumb />
+      <motion.div style={{ maxWidth: "1280px", margin: "0 auto" }}>
         {currentView === VIEW.SUBJECTS && renderSubjectsView()}
         {currentView === VIEW.TOPICS && renderTopicsView()}
         {currentView === VIEW.STUDY && renderStudyView()}
@@ -2203,7 +2319,7 @@ export default function FlashcardsPage() {
             moved INTO renderSubjectsView() during the audit so
             it lives directly below the subject grid (with a
             divider line) — see Task 6 in the audit spec. */}
-      </div>
+      </motion.div>
 
       {/* ────────────────────────────────────────────────────
           GENERATE CARDS MODAL
@@ -2523,178 +2639,401 @@ export default function FlashcardsPage() {
   function renderSubjectsView() {
     return (
       <>
-        {/* ── Unified shared page header ─────────────────────
-            Generate Cards lives in the action slot so its
-            visual treatment (size, padding, focus ring) is
-            identical to every other page's primary CTA. */}
-        <PageHeader
-          title="Flashcards"
-          subtitle="Study smarter with AI-generated revision cards"
-          action={
-            <button
-              type="button"
-              onClick={handleGenerateCards}
-              // Primary button — gold filled, matches unified
-              // style (Task 10).
-              className={
-                "bg-gold text-background font-body font-body-semibold " +
-                "text-sm px-5 py-2.5 rounded-4px inline-flex items-center " +
-                "gap-2 transition hover:brightness-90 " +
-                "focus-visible:outline-none focus-visible:ring-2 " +
-                "focus-visible:ring-gold focus-visible:ring-offset-2 " +
-                "focus-visible:ring-offset-background"
-              }
-            >
-              <Sparkles size={16} strokeWidth={2.25} aria-hidden="true" />
-              Generate Cards
-            </button>
+        <style>{`
+          @keyframes flashcards-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
           }
-        />
+          .flashcards-grid-wrap {
+            margin: 20px var(--page-padding) 32px;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+          }
+          .flashcards-stats-wrap {
+            margin: 20px var(--page-padding) 0;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+          }
+          .flashcards-skeleton-wrap {
+            margin: 20px var(--page-padding) 32px;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+          }
+          @media (max-width: 1279px) {
+            .flashcards-grid-wrap,
+            .flashcards-skeleton-wrap {
+              grid-template-columns: repeat(2, 1fr);
+            }
+          }
+          @media (max-width: 767px) {
+            .flashcards-grid-wrap,
+            .flashcards-skeleton-wrap,
+            .flashcards-stats-wrap {
+              grid-template-columns: 1fr;
+            }
+          }
+          .flashcards-subject-card:hover {
+            background: var(--card-hover) !important;
+            border-color: var(--gold-border-active) !important;
+          }
+          .flashcards-study-btn:hover {
+            background: var(--accordion-gap-bg) !important;
+          }
+          .flashcards-quiz-btn:hover {
+            opacity: 0.9;
+          }
+          .flashcards-generate-header-btn:hover {
+            opacity: 0.9;
+          }
+        `}</style>
 
-        {/* ── Body: 4 skeletons OR 4 subject cards ─────── */}
-        {dataLoading ? (
-          <section
-            aria-label="Loading subjects"
-            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+        {/* VIEW 1 — page header */}
+        <header
+          style={{
+            padding: "20px var(--page-padding) 0",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: "16px",
+            flexWrap: "wrap",
+          }}
+        >
+          <motion.div>
+            <h1
+              style={{
+                fontFamily: "'Playfair Display', serif",
+                fontSize: "28px",
+                color: "var(--text)",
+                fontWeight: 700,
+                margin: 0,
+              }}
+            >
+              My Flashcards
+            </h1>
+            <p
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "13px",
+                color: "var(--text-muted)",
+                marginTop: "4px",
+                marginBottom: 0,
+              }}
+            >
+              AI-generated revision cards with spaced repetition
+            </p>
+          </motion.div>
+          <button
+            type="button"
+            className="flashcards-generate-header-btn"
+            onClick={handleGenerateCards}
+            style={{
+              background: "var(--gold)",
+              border: "none",
+              borderRadius: "8px",
+              padding: "10px 18px",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "13px",
+              fontWeight: 500,
+              color: "var(--bg)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              flexShrink: 0,
+            }}
           >
+            <Zap size={14} strokeWidth={2.25} aria-hidden="true" />
+            Generate Cards
+          </button>
+        </header>
+
+        {/* VIEW 1 — progress summary (total, due today, mastery %) */}
+        {!dataLoading && (
+          <section aria-label="Progress summary" className="flashcards-stats-wrap">
+            {[
+              { label: "TOTAL CARDS", value: progressSummary.total },
+              { label: "DUE TODAY", value: progressSummary.dueToday },
+              {
+                label: "MASTERY",
+                value: `${progressSummary.masteryPct}%`,
+              },
+            ].map((stat) => (
+              <motion.div
+                key={stat.label}
+                style={{
+                  background: "var(--card)",
+                  border: CARD_BORDER_STYLE,
+                  borderRadius: "10px",
+                  padding: "16px 20px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: "11px",
+                    fontWeight: 500,
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    color: "var(--date-color)",
+                  }}
+                >
+                  {stat.label}
+                </span>
+                <span
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: "20px",
+                    fontWeight: 600,
+                    color: "var(--text)",
+                  }}
+                >
+                  {stat.value}
+                </span>
+              </motion.div>
+            ))}
+          </section>
+        )}
+
+        {/* VIEW 1 — subject grid or skeletons */}
+        {dataLoading ? (
+          <section aria-label="Loading subjects" className="flashcards-skeleton-wrap">
             {Array.from({ length: 4 }).map((_, i) => (
               <SkeletonSubjectCard key={i} />
             ))}
           </section>
         ) : (
-          <section
+          <motion.section
+            ref={subjectsGridRef}
             aria-label="Subjects"
-            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+            className="flashcards-grid-wrap"
+            variants={staggerContainer}
+            initial="hidden"
+            animate={
+              subjectsInView || subjectIndex.ordered.length > 0
+                ? "visible"
+                : "hidden"
+            }
           >
-            {subjectIndex.ordered.map((s) => {
+            {subjectIndex.ordered.map((subj) => {
               const subjectCards = flashcards.filter(
-                (c) => c.subject_id === s.id
+                (c) => c.subject_id === subj.id
               );
               const count = subjectCards.length;
               const avg = avgMastery(subjectCards);
+              const masteryPct = Math.round((avg / MASTERY_MAX) * 100);
               const empty = count === 0;
-
-              // Subject-coloured 3 px left edge. Falls back to
-              // the neutral input-border token when the key
-              // doesn't match (shouldn't normally happen — every
-              // SUBJECTS entry maps to one of the four keys).
-              const leftBorderClass =
-                SUBJECT_LEFT_BORDER_CLASS[s.key] || "border-l-input-border";
+              const leftBorder =
+                SUBJECT_LEFT_BORDER_VAR[subj.key] || "var(--border)";
+              const fillColor =
+                SUBJECT_FILL_VAR[subj.key] || "var(--gold)";
+              const topicNames = getTopicNamesForSubject(
+                subj.id,
+                flashcards,
+                noteTitles,
+                3
+              );
 
               return (
-                <article
-                  key={s.id}
-                  // Outer is a div (not a button) because the
-                  // card now contains two child buttons. Nesting
-                  // <button> inside <button> is invalid HTML and
-                  // triggers a Next.js hydration warning — see
-                  // the earlier Past Papers fix for context.
+                <motion.article
+                  key={subj.id}
+                  variants={staggerItem}
                   aria-disabled={empty}
-                  className={
-                    "bg-card border border-input-border border-l-[3px] " +
-                    leftBorderClass +
-                    " rounded-4px p-5 shadow-sm flex flex-col gap-3 " +
-                    "min-h-[180px] transition duration-200 ease-in-out " +
-                    (empty
-                      ? "opacity-60"
-                      : "hover:bg-hover hover:shadow-md")
-                  }
+                  className="flashcards-subject-card"
+                  style={{
+                    background: "var(--card)",
+                    borderTop: CARD_BORDER_STYLE,
+                    borderRight: CARD_BORDER_STYLE,
+                    borderBottom: CARD_BORDER_STYLE,
+                    borderLeft: `3px solid ${leftBorder}`,
+                    borderRadius: "10px",
+                    padding: "20px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "12px",
+                    transition: "background 200ms ease, border-color 200ms ease",
+                    minHeight: "200px",
+                  }}
                 >
-                  {/* Subject badge — top-left, shared component. */}
-                  <SubjectBadge subject={s} />
-
-                  <div>
-                    <h2 className="font-heading text-[22px] font-bold text-text-primary leading-tight">
-                      {s.name}
-                    </h2>
-                    <p className="text-[13px] text-text-muted mt-0.5">
-                      {s.code}
-                    </p>
-                  </div>
+                  <motion.div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                    }}
+                  >
+                    <SubjectBadge subject={subj} showCode />
+                    {!empty && (
+                      <span
+                        style={{
+                          fontFamily: "Inter, sans-serif",
+                          fontSize: "12px",
+                          color: "var(--text-muted)",
+                          marginLeft: "auto",
+                        }}
+                      >
+                        {count} {count === 1 ? "card" : "cards"}
+                      </span>
+                    )}
+                  </motion.div>
 
                   {empty ? (
-                    <p className="text-sm text-text-muted italic mt-auto">
-                      No cards yet
-                    </p>
+                    <SubjectEmptyPrompt onGenerate={handleGenerateCards} />
                   ) : (
                     <>
-                      <p className="text-[13px] text-text-muted">
-                        {count} {count === 1 ? "card" : "cards"} ·{" "}
-                        {avg.toFixed(1)}/{MASTERY_MAX} mastery
+                      <MasteryBar
+                        masteryPercent={masteryPct}
+                        fillColor={fillColor}
+                      />
+                      <p
+                        style={{
+                          fontFamily: "Inter, sans-serif",
+                          fontSize: "11px",
+                          color: "var(--text-muted)",
+                          margin: 0,
+                        }}
+                      >
+                        {masteryPct}% mastered
                       </p>
-                      <MasteryBar value={avg} />
 
-                      {/* Action chip row — Study (outline) +
-                          Quiz (filled gold). Each chip is a real
-                          button so keyboard / screen-reader users
-                          land directly on the action. Both still
-                          route via handleSelectSubject so the
-                          existing topic-selection flow continues
-                          to work — the chips replace the single-
-                          click affordance with clearer intent
-                          per Task 6. */}
-                      <div className="flex items-center gap-2 mt-auto pt-2">
+                      <motion.div>
+                        <p
+                          style={{
+                            fontFamily: "Inter, sans-serif",
+                            fontSize: "10px",
+                            textTransform: "uppercase",
+                            letterSpacing: "0.1em",
+                            color: "var(--date-color)",
+                            margin: "0 0 6px",
+                          }}
+                        >
+                          TOPICS
+                        </p>
+                        <motion.div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: "6px",
+                          }}
+                        >
+                          {topicNames.length > 0 ? (
+                            topicNames.map((name) => (
+                              <span
+                                key={name}
+                                style={{
+                                  background: "var(--card-hover)",
+                                  border: "0.5px solid var(--gold-border-hover)",
+                                  borderRadius: "3px",
+                                  padding: "3px 8px",
+                                  fontFamily: "Inter, sans-serif",
+                                  fontSize: "11px",
+                                  color: "var(--text-dim)",
+                                }}
+                              >
+                                {name}
+                              </span>
+                            ))
+                          ) : (
+                            <span
+                              style={{
+                                fontFamily: "Inter, sans-serif",
+                                fontSize: "11px",
+                                color: "var(--text-muted)",
+                              }}
+                            >
+                              General
+                            </span>
+                          )}
+                        </motion.div>
+                      </motion.div>
+
+                      <motion.div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr",
+                          gap: "8px",
+                          marginTop: "auto",
+                        }}
+                      >
                         <button
                           type="button"
-                          onClick={() => handleSelectSubject(s)}
-                          className={
-                            "flex-1 inline-flex items-center justify-center " +
-                            "gap-1.5 text-xs font-body font-body-semibold " +
-                            "border border-gold text-gold rounded-4px " +
-                            "px-3 py-1.5 transition hover:bg-card " +
-                            "focus-visible:outline-none focus-visible:ring-2 " +
-                            "focus-visible:ring-gold focus-visible:ring-offset-2 " +
-                            "focus-visible:ring-offset-background"
-                          }
-                          aria-label={`Study ${s.name}`}
+                          className="flashcards-study-btn"
+                          onClick={() => handleSelectSubject(subj)}
+                          style={{
+                            background: "transparent",
+                            border: "0.5px solid var(--gold-border-active)",
+                            borderRadius: "6px",
+                            padding: "8px 0",
+                            fontFamily: "Inter, sans-serif",
+                            fontSize: "12px",
+                            fontWeight: 500,
+                            color: "var(--gold)",
+                            cursor: "pointer",
+                          }}
+                          aria-label={`Study ${subj.name}`}
                         >
-                          <BookOpen size={14} strokeWidth={2} aria-hidden="true" />
-                          Study
+                          STUDY
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleSelectSubject(s)}
-                          className={
-                            "flex-1 inline-flex items-center justify-center " +
-                            "gap-1.5 text-xs font-body font-body-semibold " +
-                            "bg-gold text-background rounded-4px " +
-                            "px-3 py-1.5 transition hover:brightness-90 " +
-                            "focus-visible:outline-none focus-visible:ring-2 " +
-                            "focus-visible:ring-gold focus-visible:ring-offset-2 " +
-                            "focus-visible:ring-offset-background"
-                          }
-                          aria-label={`Quiz ${s.name}`}
+                          className="flashcards-quiz-btn"
+                          onClick={() => handleSelectSubject(subj)}
+                          style={{
+                            background: "var(--gold)",
+                            border: "none",
+                            borderRadius: "6px",
+                            padding: "8px 0",
+                            fontFamily: "Inter, sans-serif",
+                            fontSize: "12px",
+                            fontWeight: 500,
+                            color: "var(--bg)",
+                            cursor: "pointer",
+                          }}
+                          aria-label={`Start quiz for ${subj.name}`}
                         >
-                          <Sparkles size={14} strokeWidth={2} aria-hidden="true" />
-                          Quiz
+                          START QUIZ
                         </button>
-                      </div>
+                      </motion.div>
                     </>
                   )}
-                </article>
+                </motion.article>
               );
             })}
-          </section>
+          </motion.section>
         )}
 
-        {/* Sample-data notice — sits below the 4 cards with a
-            divider so there's no empty void between the grid
-            and this status line. */}
         {usingMock && !dataLoading && (
-          <div className="mt-8 pt-6 border-t border-input-border">
-            <p className="text-xs text-text-hint text-center">
+          <motion.div
+            style={{
+              margin: "0 var(--page-padding) 32px",
+              paddingTop: "24px",
+              borderTop: "1px solid var(--border-light)",
+            }}
+          >
+            <p
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "12px",
+                color: "var(--text-lighter)",
+                textAlign: "center",
+                margin: 0,
+              }}
+            >
               Showing sample cards while your flashcard library is being
               generated. Real cards will appear here once the backend pipeline
               populates the database.
             </p>
-          </div>
+          </motion.div>
         )}
       </>
     );
   }
 
-
-  // ─────────────────────────────────────────────────────────
   // ███████████████████████  VIEW 2  ████████████████████████
   // TOPIC SELECTION
   // ─────────────────────────────────────────────────────────
@@ -2857,8 +3196,26 @@ export default function FlashcardsPage() {
           </div>
         </header>
 
-        {/* ── Flip card ────────────────────────────────── */}
-        <div className="mx-auto max-w-2xl w-full [perspective:1000px]">
+        {/* VIEW 3 — study flip card */}
+        <p
+          style={{
+            fontFamily: "Inter, sans-serif",
+            fontSize: "12px",
+            color: "var(--text-muted)",
+            textAlign: "center",
+            margin: "0 0 12px",
+          }}
+        >
+          Card {studyIndex + 1} of {selectedTopic.cards.length}
+        </p>
+        <div
+          style={{
+            maxWidth: "560px",
+            margin: "0 auto",
+            perspective: "1000px",
+            width: "100%",
+          }}
+        >
           <div
             role="button"
             tabIndex={0}
@@ -2874,7 +3231,7 @@ export default function FlashcardsPage() {
                 setStudyFlipped(true);
               }
             }}
-            className={`relative w-full min-h-[200px] md:min-h-[280px] cursor-pointer
+            className={`relative w-full min-h-[300px] cursor-pointer
                         transition-transform duration-[400ms] ease-in-out
                         [transform-style:preserve-3d]
                         ${
@@ -2885,15 +3242,25 @@ export default function FlashcardsPage() {
                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-4px`}
           >
             {/* ── FRONT face ───────────────────────────── */}
-            <div className="absolute inset-0 [backface-visibility:hidden]
-                            bg-white border border-input-border rounded-4px shadow-md
-                            p-6 md:p-12 flex flex-col">
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-text-muted">
-                Question
-              </p>
+            <div
+              className="absolute inset-0 [backface-visibility:hidden] p-6 md:p-12 flex flex-col"
+              style={{
+                background: "var(--card)",
+                border: CARD_BORDER_STYLE,
+                borderRadius: "12px",
+              }}
+            >
 
               <div className="flex-1 flex items-center justify-center my-4">
-                <p className="font-heading text-xl md:text-2xl font-bold text-text-primary text-center leading-snug">
+                <p
+                  style={{
+                    fontFamily: "'Playfair Display', serif",
+                    fontSize: "20px",
+                    color: "var(--text)",
+                    textAlign: "center",
+                    margin: 0,
+                  }}
+                >
                   {card.front}
                 </p>
               </div>
@@ -2907,16 +3274,27 @@ export default function FlashcardsPage() {
             </div>
 
             {/* ── BACK face ────────────────────────────── */}
-            <div className="absolute inset-0 [backface-visibility:hidden]
-                            [transform:rotateY(180deg)]
-                            bg-white border border-input-border rounded-4px shadow-md
-                            p-6 md:p-12 flex flex-col">
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-text-muted">
-                Answer
-              </p>
+            <div
+              className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] p-6 md:p-12 flex flex-col"
+              style={{
+                background: "var(--card)",
+                border: CARD_BORDER_STYLE,
+                borderRadius: "12px",
+              }}
+            >
 
               <div className="flex-1 flex items-center justify-center my-4">
-                <p className="text-sm md:text-base text-text-primary text-center leading-relaxed whitespace-pre-line">
+                <p
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: "15px",
+                    color: "var(--text)",
+                    lineHeight: 1.7,
+                    textAlign: "center",
+                    whiteSpace: "pre-line",
+                    margin: 0,
+                  }}
+                >
                   {card.back}
                 </p>
               </div>
@@ -3033,7 +3411,30 @@ export default function FlashcardsPage() {
 
     return (
       <>
-        {/* ── Header ───────────────────────────────────── */}
+                <style>{`
+          .quiz-option-correct {
+            border: 0.5px solid var(--biz-text) !important;
+            background: var(--biz-bg) !important;
+            color: var(--text) !important;
+          }
+          .quiz-option-wrong {
+            border: 0.5px solid var(--exam-urgent) !important;
+            background: color-mix(in srgb, var(--exam-urgent) 12%, transparent) !important;
+            color: var(--text) !important;
+          }
+          .quiz-option-letter-correct {
+            background: var(--biz-text) !important;
+            color: var(--bg) !important;
+            border-color: var(--biz-text) !important;
+          }
+          .quiz-option-letter-wrong {
+            background: var(--exam-urgent) !important;
+            color: var(--bg) !important;
+            border-color: var(--exam-urgent) !important;
+          }
+        `}</style>
+
+        {/* VIEW 4 — quiz */}
         <header className="mb-6 flex flex-col gap-3">
           <button
             type="button"
@@ -3096,9 +3497,9 @@ export default function FlashcardsPage() {
               const isThisCorrect = idx === quizOptions.correctIndex;
               const isThisPicked = idx === selectedOption;
               if (isThisCorrect) {
-                stateClasses = "bg-green-600 border-green-700 text-white";
+                stateClasses = "quiz-option-correct";
               } else if (isThisPicked) {
-                stateClasses = "bg-red-600 border-red-700 text-white";
+                stateClasses = "quiz-option-wrong";
               } else {
                 stateClasses =
                   "bg-card border-input-border text-text-muted opacity-60";
@@ -3229,28 +3630,28 @@ export default function FlashcardsPage() {
     let perfClass;
     if (serverLabel === "Excellent") {
       perfLabel = "Excellent — Cambridge ready";
-      perfClass = "text-green-600";
+      perfClass = "quiz-perf-excellent";
     } else if (serverLabel === "Good") {
       perfLabel = "Good — review weak areas";
       perfClass = "text-gold";
     } else if (serverLabel === "Developing") {
       perfLabel = "Developing — more practice needed";
-      perfClass = "text-amber-600";
+      perfClass = "quiz-perf-developing";
     } else if (serverLabel === "Needs Work") {
       perfLabel = "Needs work — revisit this topic";
-      perfClass = "text-red-600";
+      perfClass = "quiz-perf-needs";
     } else if (percent >= 90) {
       perfLabel = "Excellent — Cambridge ready";
-      perfClass = "text-green-600";
+      perfClass = "quiz-perf-excellent";
     } else if (percent >= 70) {
       perfLabel = "Good — review weak areas";
       perfClass = "text-gold";
     } else if (percent >= 50) {
       perfLabel = "Developing — more practice needed";
-      perfClass = "text-amber-600";
+      perfClass = "quiz-perf-developing";
     } else {
       perfLabel = "Needs work — revisit this topic";
-      perfClass = "text-red-600";
+      perfClass = "quiz-perf-needs";
     }
 
     // Wrong-answer list for the "Needs More Revision" section.
@@ -3284,7 +3685,13 @@ export default function FlashcardsPage() {
 
     return (
       <>
-        {/* ── Title ────────────────────────────────────── */}
+                <style>{`
+          .quiz-perf-excellent { color: var(--biz-text); }
+          .quiz-perf-developing { color: var(--gold); }
+          .quiz-perf-needs { color: var(--exam-urgent); }
+        `}</style>
+
+        {/* VIEW 5 — results */}
         <header className="text-center mb-8">
           <h1 className="font-heading text-3xl md:text-4xl font-bold text-text-primary">
             Quiz Complete
@@ -3305,7 +3712,7 @@ export default function FlashcardsPage() {
 
         {/* ── Stats grid ────────────────────────────────── */}
         <section className="grid grid-cols-2 gap-3 max-w-2xl mx-auto mb-10">
-          <div className="bg-card border border-input-border rounded-4px p-4 text-center">
+          <div style={{ background: "var(--card)", border: CARD_BORDER_STYLE, borderRadius: "10px", padding: "16px", textAlign: "center" }}>
             <p className="font-heading text-3xl font-bold text-gold">{correct}</p>
             <p className="text-xs text-text-muted uppercase tracking-wide mt-1">
               Got it
@@ -3463,7 +3870,7 @@ export default function FlashcardsPage() {
                        hover:bg-gold-light transition-colors
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
-            Back to topics
+            Back to Topics
           </button>
         </div>
       </>

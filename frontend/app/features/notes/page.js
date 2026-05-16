@@ -27,19 +27,14 @@
 
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  CheckCircle,
-  Loader2,
-  NotebookText,
-  RefreshCw,
-  Sparkles,
-} from "lucide-react";
+import { motion, useInView } from "framer-motion";
 import { supabase } from "../../../lib/supabaseClient";
-import { SUBJECTS } from "../../../lib/subjects";
-import PageHeader from "../../components/PageHeader";
+import { getSubjectByKey, SUBJECTS } from "../../../lib/subjects";
 import SubjectBadge from "../../components/SubjectBadge";
+import { staggerContainer, staggerItem } from "../../lib/animations";
 
 // ─────────────────────────────────────────────────────────────
 // CONSTANTS
@@ -70,6 +65,49 @@ const TOAST_DISMISS_MS = 4000;
 // Six fills a typical desktop grid neatly without being slow on
 // mobile (where only one column is shown anyway).
 const SKELETON_COUNT = 6;
+
+// Placeholder notes when the list is empty — same pattern as the dashboard
+const PLACEHOLDER_NOTES = [
+  {
+    id: "p1",
+    subject: "economics",
+    title: "Market Failure — Types and Government Response",
+    summary:
+      "Market failure occurs when the free market fails to allocate resources efficiently...",
+    key_points: [
+      "Public goods are non-rivalrous",
+      "Externalities cause market failure",
+      "Government intervention corrects failures",
+    ],
+    created_at: new Date().toISOString(),
+  },
+  {
+    id: "p2",
+    subject: "business",
+    title: "The Marketing Mix — Four Ps",
+    summary:
+      "Product, Price, Place, Promotion — the four controllable elements...",
+    key_points: [
+      "Product strategy drives brand",
+      "Pricing affects demand",
+      "Place ensures accessibility",
+    ],
+    created_at: new Date().toISOString(),
+  },
+  {
+    id: "p3",
+    subject: "english",
+    title: "Analysing Tone with CLS Framework",
+    summary:
+      "Context, Language, Structure framework for analytical essays...",
+    key_points: [
+      "Context sets the scene",
+      "Language reveals intent",
+      "Structure shapes meaning",
+    ],
+    created_at: new Date().toISOString(),
+  },
+];
 
 // Supabase table that stores generated revision flashcards. Used
 // here to compute the "Cards exist for this note" badge — we read
@@ -309,12 +347,22 @@ function buildMockNotes(subjectByKey) {
 // keep these as literal strings so the JIT keeps the CSS in the
 // final bundle. Used by NoteCard to apply the 3 px coloured edge
 // described in the design audit.
-const NOTE_LEFT_BORDER_CLASS = {
-  economics: "border-l-economics-text",
-  business:  "border-l-business-text",
-  english:   "border-l-english-text",
-  ict:       "border-l-ict-text",
+// Subject-key → left accent border (CSS variables only)
+const NOTE_LEFT_BORDER_VAR = {
+  economics: "var(--econ-accent)",
+  business: "var(--biz-accent)",
+  english: "var(--eng-accent)",
+  ict: "var(--ict-accent)",
 };
+
+// Filter tab labels — order matches lib/subjects.js
+const NOTES_FILTER_OPTIONS = [
+  { value: FILTER_ALL, label: "All" },
+  { value: "economics", label: "Economics" },
+  { value: "business", label: "Business" },
+  { value: "english", label: "English" },
+  { value: "ict", label: "ICT" },
+];
 
 
 // ─────────────────────────────────────────────────────────────
@@ -327,149 +375,228 @@ const NOTE_LEFT_BORDER_CLASS = {
 // cards so the layout doesn't reflow when notes arrive.
 function SkeletonCard() {
   return (
-    <div className="bg-card border border-input-border rounded-4px p-5 shadow-sm">
-      <div className="animate-pulse space-y-3">
-        {/* Badge placeholder */}
-        <div className="h-4 w-20 bg-hover rounded-4px" />
-        {/* Title placeholder */}
-        <div className="h-5 w-3/4 bg-hover rounded-4px" />
-        {/* Metadata placeholder */}
-        <div className="h-3 w-1/2 bg-hover rounded-4px" />
-        {/* Summary placeholder — three lines of decreasing width */}
-        <div className="space-y-2 pt-2">
-          <div className="h-3 w-full bg-hover rounded-4px" />
-          <div className="h-3 w-11/12 bg-hover rounded-4px" />
-          <div className="h-3 w-2/3 bg-hover rounded-4px" />
-        </div>
-        {/* Key-points placeholder */}
-        <div className="space-y-2 pt-3">
-          <div className="h-3 w-1/3 bg-hover rounded-4px" />
-          <div className="h-3 w-4/5 bg-hover rounded-4px" />
-          <div className="h-3 w-3/5 bg-hover rounded-4px" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// SUB-COMPONENT: EmptyState
-// ─────────────────────────────────────────────────────────────
-// Shown when the filtered list is empty — either because no notes
-// have been generated yet at all, or because the active filter
-// matched zero notes. A friendly notebook icon plus a one-line
-// explanation tells the student WHY the page is empty.
-function EmptyState() {
-  return (
-    <div className="bg-card border border-input-border rounded-4px p-10 shadow-sm text-center max-w-xl mx-auto">
-      <div className="flex justify-center mb-4">
-        <NotebookText
-          size={48}
-          strokeWidth={1.5}
-          className="text-gold"
+    <div
+      style={{
+        background: "var(--card)",
+        borderRadius: "10px",
+        padding: "20px",
+      }}
+    >
+      <div
+        style={{
+          animation: "notes-pulse 1.5s ease-in-out infinite",
+        }}
+      >
+        <div
+          style={{
+            width: "60%",
+            height: "12px",
+            background: "var(--card-hover)",
+            borderRadius: "4px",
+          }}
+        />
+        <div
+          style={{
+            width: "100%",
+            height: "8px",
+            marginTop: "8px",
+            background: "var(--card-hover)",
+            borderRadius: "4px",
+          }}
+        />
+        <div
+          style={{
+            width: "80%",
+            height: "8px",
+            marginTop: "6px",
+            background: "var(--card-hover)",
+            borderRadius: "4px",
+          }}
         />
       </div>
-      <h2 className="font-heading text-2xl font-bold text-text-primary mb-2">
-        No notes yet
-      </h2>
-      <p className="text-text-muted leading-relaxed">
-        Your notes will appear here automatically after your Google Classroom is
-        connected and synced.
-      </p>
     </div>
   );
 }
 
 
-// ─────────────────────────────────────────────────────────────
-// SUB-COMPONENT: NoteCard
-// ─────────────────────────────────────────────────────────────
-// A single note: coloured left edge → subject badge → title →
-// metadata → summary (line-clamped to 4 lines until expanded) →
-// "Key Points" label → bullet list.
-//
-// VISUAL SPEC (post-audit):
-//   • Standard card shell (bg-card, 1 px input-border, 4 px
-//     radius, shadow-sm → shadow-md on hover).
-//   • 3 px subject-coloured left edge (Task 4).
-//   • Collapsed height capped at 320 px; summary is clamped to
-//     four lines so cards in the grid stay visually balanced.
-//   • "Read more" toggles to "Show less" and expands the card
-//     to its natural height (Task 5).
-//   • Key Points section sits OUTSIDE the clamp so students
-//     never lose the high-signal bullets when collapsed.
-//
-// `whitespace-pre-line` on the summary preserves the line breaks
-// the AI summariser produces without rendering Markdown — exactly
-// what the original spec asked for.
-// ─────────────────────────────────────────────────────────────
-// SUB-COMPONENT: GenerateCardsButton
-// ─────────────────────────────────────────────────────────────
-// The small button that lives at the bottom-right of every
-// NoteCard. Its appearance depends on a single `state` string
-// passed down from the parent NotesPage:
-//
-//   "idle"      → outline-gold "Generate Cards" with Sparkles
-//   "loading"   → disabled spinner "Generating…"
-//   "success"   → green "✓ Cards generated" (3 sec linger)
-//   "exists"    → muted "Cards exist" (still clickable so the
-//                 click can fire a toast telling the user where
-//                 to study — see handleGenerateForNote()).
-//
-// Keeping it as its own component means the rest of NoteCard
-// doesn't re-render when only the button state changes.
-// ─────────────────────────────────────────────────────────────
-function GenerateCardsButton({ note, state, onGenerate }) {
-  // Base classes shared across every state. We use `text-[12px]`
-  // for the Inter-12 size called for in the spec; everything
-  // else uses standard Tailwind tokens so the look stays
-  // consistent with the rest of the design system.
-  const base =
-    "inline-flex items-center gap-1.5 text-[12px] font-body " +
-    "font-body-medium rounded-4px px-3 py-1.5 border transition " +
-    "focus-visible:outline-none focus-visible:ring-2 " +
-    "focus-visible:ring-gold focus-visible:ring-offset-2 " +
-    "focus-visible:ring-offset-card";
+function NotesTabButton({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      style={{
+        fontFamily: "Inter, sans-serif",
+        fontSize: "13px",
+        fontWeight: active ? 500 : 400,
+        color: active ? "var(--gold)" : "var(--text-muted)",
+        borderBottom: active ? "2px solid var(--gold)" : "2px solid transparent",
+        paddingBottom: "10px",
+        paddingLeft: "4px",
+        paddingRight: "4px",
+        marginBottom: "-1px",
+        background: "none",
+        borderTop: "none",
+        borderLeft: "none",
+        borderRight: "none",
+        cursor: "pointer",
+        transition: "color 200ms ease",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
 
-  // Pick the right icon, label, and per-state class list.
+
+function EmptyState({ activeFilter, onSync, isSyncing }) {
+  const subjectName =
+    activeFilter === FILTER_ALL
+      ? null
+      : getSubjectByKey(activeFilter)?.name ?? activeFilter;
+
+  return (
+    <div
+      style={{
+        background: "var(--card)",
+        border: "0.5px solid var(--gold-border)",
+        borderRadius: "10px",
+        padding: "48px 32px",
+        textAlign: "center",
+        maxWidth: "480px",
+        margin: "0 auto",
+      }}
+    >
+      <svg
+        width="32"
+        height="32"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="var(--gold-icon)"
+        strokeWidth="1.5"
+        aria-hidden
+        style={{ margin: "0 auto", display: "block" }}
+      >
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+      </svg>
+      <h2
+        style={{
+          fontFamily: "'Playfair Display', serif",
+          fontSize: "16px",
+          color: "var(--text)",
+          fontWeight: 700,
+          margin: "12px 0 0",
+        }}
+      >
+        No notes yet
+      </h2>
+      <p
+        style={{
+          fontFamily: "Inter, sans-serif",
+          fontSize: "13px",
+          color: "var(--text-muted)",
+          marginTop: "8px",
+          lineHeight: 1.5,
+        }}
+      >
+        {activeFilter === FILTER_ALL
+          ? "Sync your Google Classroom to get started"
+          : `No ${subjectName} notes yet`}
+      </p>
+      <button
+        type="button"
+        onClick={onSync}
+        disabled={isSyncing}
+        style={{
+          marginTop: "20px",
+          background: "transparent",
+          border: "0.5px solid var(--gold-border-active)",
+          borderRadius: "8px",
+          padding: "10px 16px",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "8px",
+          fontFamily: "Inter, sans-serif",
+          fontSize: "13px",
+          fontWeight: 500,
+          color: "var(--gold)",
+          cursor: isSyncing ? "wait" : "pointer",
+        }}
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          aria-hidden
+          style={{
+            animation: isSyncing ? "notes-sync-spin 0.7s linear infinite" : "none",
+          }}
+        >
+          <polyline points="23 4 23 10 17 10" />
+          <polyline points="1 20 1 14 7 14" />
+          <path d="M3.5 10c.84-2.5 2.87-4.52 5.5-5.32C13.56 3.19 18.21 4.65 20.5 7.4" />
+          <path d="M20.5 14c-.84 2.5-2.87 4.52-5.5 5.32C10.44 20.81 5.79 19.35 3.5 16.6" />
+        </svg>
+        {isSyncing ? "Syncing..." : "Sync Now"}
+      </button>
+    </div>
+  );
+}
+
+
+function BtnSpinnerSmall() {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        display: "inline-block",
+        width: 14,
+        height: 14,
+        border: "2px solid var(--gold)",
+        borderTopColor: "transparent",
+        borderRadius: "50%",
+        animation: "notes-sync-spin 0.7s linear infinite",
+      }}
+    />
+  );
+}
+
+
+function GenerateCardsButton({ note, state, onGenerate }) {
   let icon = null;
-  let label = "";
-  let stateCls = "";
-  // Loading and the transient success state both disable the
-  // button so we can't fire a second request mid-flight.
+  let label = "Generate Cards";
   let disabled = false;
 
+  const zapIcon = (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </svg>
+  );
+
+  const checkIcon = (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+
   if (state === "exists") {
-    // Cards already exist for this note — clicking only shows
-    // a "go to flashcards to study" toast (handled by the
-    // parent's onGenerate handler).
-    icon = <CheckCircle size={14} aria-hidden="true" />;
-    label = "Cards exist";
-    stateCls =
-      "border-input-border text-text-muted bg-transparent " +
-      "hover:bg-hover";
+    icon = checkIcon;
+    label = "Cards Exist";
   } else if (state === "loading") {
-    // Mid-flight Groq call — show a spinner and lock the button.
-    icon = <Loader2 size={14} className="animate-spin" aria-hidden="true" />;
-    label = "Generating…";
-    stateCls =
-      "border-gold text-gold bg-transparent cursor-wait opacity-80";
+    icon = <BtnSpinnerSmall />;
+    label = "Generating...";
     disabled = true;
   } else if (state === "success") {
-    // Briefly celebrate. Uses Tailwind's built-in green palette
-    // (NOT a hex literal) so the design-system rule isn't bent.
-    icon = <CheckCircle size={14} aria-hidden="true" />;
-    label = "Cards generated";
-    stateCls = "border-green-600 text-green-700 bg-transparent";
+    icon = checkIcon;
+    label = "Cards Generated!";
     disabled = true;
   } else {
-    // Default idle state — the standard "Generate Cards" button.
-    icon = <Sparkles size={14} aria-hidden="true" />;
+    icon = zapIcon;
     label = "Generate Cards";
-    stateCls =
-      "border-gold text-gold bg-transparent " +
-      "hover:bg-gold hover:text-background";
   }
 
   return (
@@ -478,7 +605,24 @@ function GenerateCardsButton({ note, state, onGenerate }) {
       onClick={() => onGenerate(note)}
       disabled={disabled}
       aria-label={label + ` for "${note.title}"`}
-      className={base + " " + stateCls}
+      style={{
+        width: "100%",
+        background: "transparent",
+        border: "0.5px solid var(--gold-dim)",
+        borderRadius: "6px",
+        padding: "8px 12px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "6px",
+        fontFamily: "Inter, sans-serif",
+        fontSize: "12px",
+        fontWeight: 500,
+        color: "var(--gold)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        transition: "background 200ms ease, border-color 200ms ease",
+        opacity: disabled && state === "loading" ? 0.85 : 1,
+      }}
     >
       {icon}
       {label}
@@ -488,131 +632,170 @@ function GenerateCardsButton({ note, state, onGenerate }) {
 
 
 function NoteCard({ note, subjectMeta, generateState, onGenerate }) {
-  // Local expand/collapse state. Defaults to collapsed so the
-  // grid renders compact + uniform on first paint.
   const [expanded, setExpanded] = useState(false);
+  const [hovered, setHovered] = useState(false);
 
-  // Defensive: even if a row arrived with stray Markdown, strip
-  // it so the student never sees raw symbols.
   const cleanSummary = stripMarkdown(note.summary);
-
-  // Metadata line is "14 May 2026" plus an optional source,
-  // separated by a thin middle dot. If `source` is null/empty
-  // we omit both the dot and the source span — the design has
-  // to stay tidy regardless of which fields the DB row has.
   const dateText = formatNoteDate(note.created_at);
-  const hasSource = !!note.source && String(note.source).trim().length > 0;
+  const leftAccent =
+    (subjectMeta && NOTE_LEFT_BORDER_VAR[subjectMeta.key]) || "var(--border)";
 
-  // Subject-coloured 3 px left border. Falls back to the neutral
-  // input-border token when the subject can't be matched.
-  const leftBorderClass =
-    (subjectMeta && NOTE_LEFT_BORDER_CLASS[subjectMeta.key]) ||
-    "border-l-input-border";
+  const keyPoints = Array.isArray(note.key_points)
+    ? note.key_points.slice(0, 3)
+    : [];
+  const showReadMore = cleanSummary.length > 180;
+
+  const sideBorder = hovered
+    ? "0.5px solid var(--gold-border-active)"
+    : "0.5px solid var(--gold-border)";
 
   return (
-    <article
-      className={
-        "bg-card border border-input-border border-l-[3px] " +
-        leftBorderClass +
-        " rounded-4px p-5 shadow-sm flex flex-col gap-3 " +
-        "transition duration-200 ease-in-out " +
-        "hover:bg-hover hover:shadow-md"
-      }
+    <motion.article
+      variants={staggerItem}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        background: hovered ? "var(--card-hover)" : "var(--card)",
+        borderTop: sideBorder,
+        borderRight: sideBorder,
+        borderBottom: sideBorder,
+        borderLeft: `3px solid ${leftAccent}`,
+        borderRadius: "10px",
+        padding: "20px",
+        display: "flex",
+        flexDirection: "column",
+        transition: "background 200ms ease, border-color 200ms ease",
+      }}
     >
-      {/* 1. Subject badge — colour driven by subjectMeta.key.
-              Uses the shared SubjectBadge so every page renders
-              this pill identically. */}
-      {subjectMeta && (
-        <div>
-          <SubjectBadge subject={subjectMeta} />
-        </div>
-      )}
+      {subjectMeta && <SubjectBadge subject={subjectMeta} />}
 
-      {/* 2. Title — Playfair Display, primary text token */}
-      <h3 className="font-heading text-lg font-bold text-text-primary leading-snug">
+      <h3
+        style={{
+          fontFamily: "'Playfair Display', serif",
+          fontSize: "16px",
+          color: "var(--text)",
+          fontWeight: 700,
+          margin: "8px 0 4px",
+          lineHeight: 1.3,
+        }}
+      >
         {note.title}
       </h3>
 
-      {/* 3. Metadata row — date + optional source */}
-      <p className="text-xs text-text-muted flex flex-wrap items-center gap-1.5">
-        <span>{dateText}</span>
-        {hasSource && (
-          <>
-            <span aria-hidden="true">·</span>
-            <span>{note.source}</span>
-          </>
-        )}
+      <p
+        style={{
+          fontFamily: "Inter, sans-serif",
+          fontSize: "11px",
+          color: "var(--text-muted)",
+          margin: 0,
+        }}
+      >
+        {dateText}
       </p>
 
-      {/* 4. Summary — flowing plain text, line breaks preserved.
-              When collapsed we clamp to 4 lines so every card in
-              the grid is the same visual weight; clicking "Read
-              more" removes the clamp and the card expands to fit. */}
       <p
-        className={
-          "text-sm text-text-primary leading-relaxed whitespace-pre-line " +
-          (expanded ? "" : "line-clamp-4")
-        }
+        style={{
+          fontFamily: "Inter, sans-serif",
+          fontSize: "13px",
+          color: "var(--text-dim)",
+          lineHeight: 1.6,
+          marginTop: "8px",
+          marginBottom: 0,
+          display: expanded ? "block" : "-webkit-box",
+          WebkitLineClamp: expanded ? undefined : 3,
+          WebkitBoxOrient: "vertical",
+          overflow: expanded ? "visible" : "hidden",
+        }}
       >
         {cleanSummary}
       </p>
 
-      {/* 4b. Read more / Show less toggle. Renders only when the
-               summary is long enough that the clamp would actually
-               truncate (a rough proxy: >280 chars). Keeps shorter
-               notes from showing an unnecessary control. */}
-      {cleanSummary.length > 280 && (
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={() => setExpanded((prev) => !prev)}
-            className={
-              "text-xs font-body font-body-medium text-gold " +
-              "hover:underline focus:outline-none focus:underline"
-            }
+      {showReadMore && (
+        <button
+          type="button"
+          onClick={() => setExpanded((prev) => !prev)}
+          style={{
+            alignSelf: "flex-end",
+            marginTop: "4px",
+            fontFamily: "Inter, sans-serif",
+            fontSize: "12px",
+            color: "var(--gold)",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: 0,
+          }}
+        >
+          {expanded ? "Show less" : "Read more"}
+        </button>
+      )}
+
+      {keyPoints.length > 0 && (
+        <>
+          <div
+            aria-hidden="true"
+            style={{
+              height: "1px",
+              background: "var(--border)",
+              margin: "14px 0",
+            }}
+          />
+          <p
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: "10px",
+              fontWeight: 500,
+              letterSpacing: "0.1em",
+              color: "var(--date-color)",
+              textTransform: "uppercase",
+              marginBottom: "10px",
+            }}
           >
-            {expanded ? "Show less" : "Read more"}
-          </button>
-        </div>
-      )}
-
-      {/* 5. Key Points section — only render if the array has items.
-              ALWAYS visible (never clamped) because these are the
-              highest-signal bullets and the student should see them
-              even when the card is collapsed. */}
-      {Array.isArray(note.key_points) && note.key_points.length > 0 && (
-        <div className="pt-1">
-          <h4 className="text-[11px] font-body font-body-semibold uppercase tracking-widest text-text-muted mb-2">
-            Key Points
-          </h4>
-          <ul className="space-y-1.5">
-            {note.key_points.map((point, idx) => (
-              <li
-                key={idx}
-                className="text-sm text-text-primary leading-relaxed flex gap-2"
+            KEY POINTS
+          </p>
+          {keyPoints.map((point, idx) => (
+            <div
+              key={idx}
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "8px",
+                marginBottom: "6px",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  width: "4px",
+                  height: "4px",
+                  background: "var(--gold)",
+                  flexShrink: 0,
+                  marginTop: "6px",
+                }}
+              />
+              <span
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "12px",
+                  color: "var(--text-dim)",
+                  lineHeight: 1.5,
+                }}
               >
-                <span aria-hidden="true" className="text-gold leading-relaxed">
-                  •
-                </span>
-                <span>{stripMarkdown(point)}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+                {stripMarkdown(point)}
+              </span>
+            </div>
+          ))}
+        </>
       )}
 
-      {/* 6. Generate Cards action — bottom-right corner. The
-              `mt-auto` pushes it to the bottom of the flex column
-              so every card in the grid lines its button up at the
-              same y position regardless of summary length. */}
-      <div className="mt-auto flex justify-end pt-3">
+      <div style={{ marginTop: "auto", paddingTop: "16px" }}>
         <GenerateCardsButton
           note={note}
           state={generateState}
           onGenerate={onGenerate}
         />
       </div>
-    </article>
+    </motion.article>
   );
 }
 
@@ -691,14 +874,21 @@ export default function NotesPage() {
   // a useCallback dependency array. Same pattern the homework
   // page uses for currentUserId.
   const currentUserIdRef = useRef(currentUserId);
+  const existingCardTitlesRef = useRef(existingCardTitles);
+  // Ref for stagger animation — fires when the notes grid scrolls into view
+  const notesGridRef = useRef(null);
+
+  const notesInView = useInView(notesGridRef, {
+    once: true,
+    margin: "-40px",
+  });
+
   useEffect(() => {
     currentUserIdRef.current = currentUserId;
   }, [currentUserId]);
-  const existingCardTitlesRef = useRef(existingCardTitles);
   useEffect(() => {
     existingCardTitlesRef.current = existingCardTitles;
   }, [existingCardTitles]);
-
 
   // ───────────────────────────────────────────────────────────
   // EFFECT 1 — Auth + onboarding guard.
@@ -1195,20 +1385,21 @@ export default function NotesPage() {
   };
 
 
-  // ───────────────────────────────────────────────────────────
-  // DERIVED VALUE: filteredNotes
-  // ───────────────────────────────────────────────────────────
-  // Pure client-side filter. When the user clicks "Economics"
-  // we keep only notes whose `subject_id` resolves to that key.
-  // useMemo avoids redoing the filter on every keystroke / render.
-  const filteredNotes = useMemo(() => {
-    if (activeFilter === FILTER_ALL) return notes;
-    return notes.filter((n) => {
-      const meta = subjectIndex.byId[n.subject_id];
-      return meta?.key === activeFilter;
-    });
-  }, [notes, activeFilter, subjectIndex.byId]);
+  // Notes to render — real API rows when present, otherwise placeholders
+  const displayNotes = notes && notes.length > 0 ? notes : PLACEHOLDER_NOTES;
 
+  // Client-side filter by subject key (supports `subject` on placeholders
+  // and subject_id lookup for API rows)
+  const filteredNotes =
+    activeFilter === FILTER_ALL
+      ? displayNotes
+      : displayNotes.filter((n) => {
+          const subjectKey =
+            n.subject?.toLowerCase?.() ??
+            subjectIndex.byId[n.subject_id]?.key ??
+            "";
+          return subjectKey === activeFilter.toLowerCase();
+        });
 
   // ───────────────────────────────────────────────────────────
   // RENDER GATE
@@ -1224,120 +1415,241 @@ export default function NotesPage() {
     );
   }
 
-
   // ───────────────────────────────────────────────────────────
   // PAGE LAYOUT
   // ───────────────────────────────────────────────────────────
   return (
-    <main className="min-h-screen bg-background py-6 px-4 sm:px-8">
-      <div className="max-w-7xl mx-auto">
-
-        {/* SECTION 2 — PAGE HEADER
-            Uses the shared PageHeader. The Sync Now button is
-            passed via the action slot so its visual treatment
-            (size, position, spacing) is identical to every other
-            page's primary CTA. */}
-        <PageHeader
-          title="My Notes"
-          subtitle="Auto-generated from your Google Classroom"
-          action={
-            <button
-              type="button"
-              onClick={handleSync}
-              disabled={isSyncing}
-              // Primary button — gold filled. Matches the unified
-              // primary style used on every page (Task 10).
-              className={
-                "bg-gold text-background font-body font-body-semibold " +
-                "text-sm px-5 py-2.5 rounded-4px inline-flex items-center " +
-                "gap-2 transition hover:brightness-90 " +
-                "disabled:opacity-60 disabled:cursor-not-allowed " +
-                "focus-visible:outline-none focus-visible:ring-2 " +
-                "focus-visible:ring-gold focus-visible:ring-offset-2 " +
-                "focus-visible:ring-offset-background"
-              }
-            >
-              <RefreshCw
-                size={16}
-                strokeWidth={2.25}
-                className={isSyncing ? "animate-spin" : ""}
-                aria-hidden="true"
-              />
-              {isSyncing ? "Syncing…" : "Sync Now"}
-            </button>
+    <motion.main
+      className="notes-page"
+      style={{ minHeight: "100vh", background: "var(--bg)" }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.35 }}
+    >
+      <style jsx global>{`
+        @keyframes notes-sync-spin {
+          to {
+            transform: rotate(360deg);
           }
-        />
+        }
+        @keyframes notes-pulse {
+          0%,
+          100% {
+            opacity: 0.45;
+          }
+          50% {
+            opacity: 0.85;
+          }
+        }
+        .notes-grid-wrap {
+          margin: 20px var(--page-padding) 32px;
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 16px;
+        }
+        @media (max-width: 1023px) {
+          .notes-grid-wrap {
+            grid-template-columns: repeat(2, 1fr);
+          }
+        }
+        @media (max-width: 767px) {
+          .notes-grid-wrap {
+            grid-template-columns: 1fr;
+          }
+          .notes-sync-label {
+            display: none;
+          }
+        }
+        .notes-sync-btn:hover:not(:disabled) {
+          background: var(--nav-icon-bg);
+        }
+      `}</style>
 
-
-        {/* ────────────────────────────────────────────────────
-            SECTION 3 — FILTER TABS
-            ────────────────────────────────────────────────────
-            One row of pill buttons: All + every subject from the
-            DB in the order declared in lib/subjects.js. Active
-            tab uses bg-gold + text-background (the "cream") with
-            no border. Inactive tabs use bg-card + text-text-muted
-            with the input-border token. The row scrolls horizontally
-            on mobile so all five fit at 375px without wrapping
-            awkwardly. */}
-        <nav className="mb-6 -mx-1 overflow-x-auto">
-          <ul className="flex items-center gap-2 px-1 min-w-max">
-            <li>
-              <FilterTab
-                isActive={activeFilter === FILTER_ALL}
-                onClick={() => setActiveFilter(FILTER_ALL)}
-              >
-                All
-              </FilterTab>
-            </li>
-            {subjectIndex.ordered.map((s) => (
-              <li key={s.id}>
-                <FilterTab
-                  isActive={activeFilter === s.key}
-                  onClick={() => setActiveFilter(s.key)}
-                >
-                  {s.name}
-                </FilterTab>
-              </li>
-            ))}
-          </ul>
-        </nav>
-
-
-        {/* ────────────────────────────────────────────────────
-            SECTION 4/5/6 — NOTES GRID / EMPTY / LOADING
-            ────────────────────────────────────────────────────
-            Three mutually exclusive states share the same outer
-            container so the layout stays stable when content
-            swaps. The grid is 1 column on mobile, 2 on tablet,
-            3 on desktop — driven entirely by Tailwind responsive
-            prefixes (no media-query JS). */}
-        {notesLoading ? (
-          /* ── LOADING ─────────────────────────────────────── */
-          <section
-            aria-label="Loading notes"
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+      <div
+        style={{
+          padding: "16px var(--page-padding) 0",
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+        }}
+      >
+        <Link
+          href="/dashboard"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            fontFamily: "Inter, sans-serif",
+            fontSize: "13px",
+            color: "var(--text-muted)",
+            textDecoration: "none",
+            transition: "color 200ms",
+          }}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden
           >
-            {Array.from({ length: SKELETON_COUNT }).map((_, i) => (
-              <SkeletonCard key={i} />
-            ))}
-          </section>
-        ) : filteredNotes.length === 0 ? (
-          /* ── EMPTY ───────────────────────────────────────── */
-          <section aria-label="No notes" className="mt-6">
-            <EmptyState />
-          </section>
-        ) : (
-          /* ── NOTES GRID ──────────────────────────────────── */
-          <section
+            <path d="M19 12H5M12 19l-7-7 7-7" />
+          </svg>
+          Dashboard
+        </Link>
+        <span style={{ color: "var(--text-muted)", fontSize: "13px" }}>/</span>
+        <span
+          style={{
+            fontFamily: "Inter, sans-serif",
+            fontSize: "13px",
+            color: "var(--text-dim)",
+          }}
+        >
+          My Notes
+        </span>
+      </div>
+
+      <header
+        style={{
+          padding: "20px var(--page-padding) 0",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: "16px",
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <h1
+            style={{
+              fontFamily: "'Playfair Display', serif",
+              fontSize: "28px",
+              color: "var(--text)",
+              fontWeight: 700,
+              margin: 0,
+            }}
+          >
+            My Notes
+          </h1>
+          <p
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: "13px",
+              color: "var(--text-muted)",
+              marginTop: "4px",
+              marginBottom: 0,
+            }}
+          >
+            Auto-generated from your Google Classroom
+          </p>
+        </div>
+        <button
+          type="button"
+          className="notes-sync-btn"
+          onClick={handleSync}
+          disabled={isSyncing}
+          style={{
+            background: "transparent",
+            border: "0.5px solid var(--gold-border-active)",
+            borderRadius: "8px",
+            padding: "10px 16px",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            fontFamily: "Inter, sans-serif",
+            fontSize: "13px",
+            fontWeight: 500,
+            color: "var(--gold)",
+            cursor: isSyncing ? "wait" : "pointer",
+            transition: "background 200ms ease, border-color 200ms ease",
+            flexShrink: 0,
+          }}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden
+            style={{
+              animation: isSyncing
+                ? "notes-sync-spin 0.7s linear infinite"
+                : "none",
+            }}
+          >
+            <polyline points="23 4 23 10 17 10" />
+            <polyline points="1 20 1 14 7 14" />
+            <path d="M3.5 10c.84-2.5 2.87-4.52 5.5-5.32C13.56 3.19 18.21 4.65 20.5 7.4" />
+            <path d="M20.5 14c-.84 2.5-2.87 4.52-5.5 5.32C10.44 20.81 5.79 19.35 3.5 16.6" />
+          </svg>
+          <span className="notes-sync-label">
+            {isSyncing ? "Syncing..." : "Sync Now"}
+          </span>
+        </button>
+      </header>
+
+      <nav
+        aria-label="Notes filters"
+        style={{
+          margin: "20px var(--page-padding) 0",
+          borderBottom: "1px solid var(--border-light)",
+          display: "flex",
+          gap: "24px",
+        }}
+      >
+        {NOTES_FILTER_OPTIONS.map((opt) => (
+          <NotesTabButton
+            key={opt.value}
+            active={activeFilter === opt.value}
+            onClick={() => setActiveFilter(opt.value)}
+          >
+            {opt.label}
+          </NotesTabButton>
+        ))}
+      </nav>
+
+      {notesLoading ? (
+        <section
+          aria-label="Loading notes"
+          className="notes-grid-wrap"
+        >
+          {Array.from({ length: SKELETON_COUNT }).map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
+        </section>
+      ) : (
+        <>
+          {filteredNotes.length === 0 && (
+            <section
+              aria-label="No notes"
+              style={{ margin: "20px var(--page-padding) 32px" }}
+            >
+              <EmptyState
+                activeFilter={activeFilter}
+                onSync={handleSync}
+                isSyncing={isSyncing}
+              />
+            </section>
+          )}
+          <motion.section
+            ref={notesGridRef}
             aria-label="Notes grid"
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+            className="notes-grid-wrap"
+            variants={staggerContainer}
+            initial="hidden"
+            animate={notesInView || filteredNotes.length > 0 ? "visible" : "hidden"}
           >
-            {filteredNotes.map((note) => {
-              // Resolve the Generate Cards button state for this
-              // specific note. Priority order:
-              //   1. An in-flight handler state ("loading"/"success").
-              //   2. "exists" if the title is in our cards-exist set.
-              //   3. Otherwise default to "idle".
+            {console.log("[Notes] filteredNotes:", filteredNotes)}
+            {console.log(
+              "[Notes] filteredNotes length:",
+              filteredNotes?.length
+            )}
+            {console.log("[Notes] loading:", notesLoading)}
+            {filteredNotes.map((note, index) => {
               const liveState = generateState[note.id];
               let buttonState = liveState ?? "idle";
               if (
@@ -1346,89 +1658,90 @@ export default function NotesPage() {
               ) {
                 buttonState = "exists";
               }
+              const subjectMeta =
+                subjectIndex.byId[note.subject_id] ??
+                (note.subject
+                  ? {
+                      key: note.subject,
+                      name:
+                        getSubjectByKey(note.subject)?.name ?? note.subject,
+                    }
+                  : undefined);
               return (
                 <NoteCard
-                  key={note.id}
+                  key={note.id ?? index}
                   note={note}
-                  subjectMeta={subjectIndex.byId[note.subject_id]}
+                  subjectMeta={subjectMeta}
                   generateState={buttonState}
                   onGenerate={handleGenerateForNote}
                 />
               );
             })}
-          </section>
-        )}
+          </motion.section>
+        </>
+      )}
 
-        {/* Mock-data disclaimer — only visible during development
-            when we've substituted in mock notes because the real
-            table is empty. Keeps the dev experience honest. */}
-        {usingMock && !notesLoading && filteredNotes.length > 0 && (
-          <p className="mt-6 text-xs text-text-hint text-center">
-            Showing sample notes while your Google Classroom sync is being set
-            up. Real notes will replace these automatically.
-          </p>
-        )}
+      {usingMock && !notesLoading && filteredNotes.length > 0 && (
+        <p
+          style={{
+            marginTop: "24px",
+            textAlign: "center",
+            fontFamily: "Inter, sans-serif",
+            fontSize: "11px",
+            color: "var(--text-extra-dim)",
+          }}
+        >
+          Showing sample notes while your Google Classroom sync is being set up.
+          Real notes will replace these automatically.
+        </p>
+      )}
 
-
-        {/* ────────────────────────────────────────────────────
-            TOAST
-            ────────────────────────────────────────────────────
-            Fixed bottom-right notification. Used for sync
-            success / failure messages. Auto-dismisses after
-            TOAST_DISMISS_MS. role + aria-live ensure screen
-            readers announce the result. */}
-        {toast && (
-          <div
-            role="status"
-            aria-live="polite"
-            className={
-              "fixed bottom-6 right-6 z-50 max-w-sm rounded-4px shadow-md " +
-              "border p-4 pr-10 text-sm bg-white " +
-              (toast.tone === "success"
-                ? "border-gold text-text-primary"
-                : "border-red-200 text-red-700")
-            }
+      {toast && (
+        <motion.div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            bottom: "24px",
+            right: "24px",
+            zIndex: 50,
+            maxWidth: "360px",
+            borderRadius: "8px",
+            padding: "16px 40px 16px 16px",
+            fontFamily: "Inter, sans-serif",
+            fontSize: "13px",
+            background: "var(--card)",
+            border:
+              toast.tone === "error"
+                ? "0.5px solid color-mix(in srgb, var(--exam-urgent) 30%, transparent)"
+                : "0.5px solid var(--gold-border)",
+            color:
+              toast.tone === "error" ? "var(--exam-urgent)" : "var(--text)",
+            boxShadow: "var(--chat-panel-shadow)",
+          }}
+        >
+          <p style={{ margin: 0, lineHeight: 1.5 }}>{toast.message}</p>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            aria-label="Dismiss"
+            style={{
+              position: "absolute",
+              top: "8px",
+              right: "8px",
+              background: "none",
+              border: "none",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+              fontSize: "18px",
+              lineHeight: 1,
+            }}
           >
-            <p className="leading-relaxed">{toast.message}</p>
-            <button
-              type="button"
-              onClick={() => setToast(null)}
-              aria-label="Dismiss"
-              className="absolute top-2 right-2 text-text-hint hover:text-text-primary transition leading-none text-lg"
-            >
-              ×
-            </button>
-          </div>
-        )}
-      </div>
-    </main>
+            ×
+          </button>
+        </motion.div>
+      )}
+    </motion.main>
   );
 }
 
-
-// ─────────────────────────────────────────────────────────────
-// SUB-COMPONENT: FilterTab
-// ─────────────────────────────────────────────────────────────
-// One pill in the filter row. The active variant uses the gold
-// token as background and the page-background colour ("cream")
-// as the foreground. The inactive variant uses card + muted text
-// + the input-border token for a soft outline that doesn't shout
-// when there are five tabs in a row.
-function FilterTab({ isActive, onClick, children }) {
-  const base =
-    "inline-flex items-center px-4 py-1.5 rounded-full text-sm font-semibold whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold focus-visible:ring-offset-2 focus-visible:ring-offset-background";
-  const active = "bg-gold text-background border border-transparent";
-  const inactive =
-    "bg-card text-text-muted border border-input-border hover:bg-hover";
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={isActive}
-      className={`${base} ${isActive ? active : inactive}`}
-    >
-      {children}
-    </button>
-  );
-}

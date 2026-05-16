@@ -43,6 +43,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -64,7 +65,6 @@ import {
 } from "lucide-react";
 import { supabase } from "../../../lib/supabaseClient";
 import { SUBJECTS } from "../../../lib/subjects";
-import PageHeader from "../../components/PageHeader";
 import SubjectBadge from "../../components/SubjectBadge";
 
 
@@ -663,147 +663,109 @@ function buildMockEntries(weekStart, subjectByKey) {
 // the shared SubjectBadge from app/components/SubjectBadge.js.)
 
 /**
- * StatCard — one of the four stat tiles above the weekly grid.
- * Always small, never wraps in two lines.
+ * TimetableBreadcrumb — Dashboard / My Timetable (matches notes page).
  */
-function StatCard({ value, label }) {
+function TimetableBreadcrumb() {
   return (
-    <div className="bg-card border border-input-border rounded-4px p-3 sm:p-4">
-      <p className="font-heading text-gold text-2xl sm:text-3xl font-heading-bold leading-none">
-        {value}
-      </p>
-      <p className="font-body text-text-muted text-xs mt-2 uppercase tracking-wide">
-        {label}
-      </p>
+    <div
+      style={{
+        padding: "16px var(--page-padding) 0",
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+      }}
+    >
+      <Link
+        href="/dashboard"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          fontFamily: "Inter, sans-serif",
+          fontSize: "13px",
+          color: "var(--text-muted)",
+          textDecoration: "none",
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <path d="M19 12H5M12 19l-7-7 7-7" />
+        </svg>
+        Dashboard
+      </Link>
+      <span style={{ color: "var(--text-muted)", fontSize: "13px" }}>/</span>
+      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-dim)" }}>
+        My Timetable
+      </span>
     </div>
   );
 }
 
 /**
- * ProgressBar — full-width 6 px bar. The filled width is the
- * single piece of dynamic style on the page (Tailwind's JIT
- * cannot synthesise a literal percentage from a runtime number).
+ * StatCard — weekly summary stat tile.
+ */
+function StatCard({ value, label }) {
+  return (
+    <div
+      style={{
+        background: "var(--card)",
+        border: "0.5px solid var(--gold-border)",
+        borderRadius: "10px",
+        padding: "16px 20px",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+      }}
+    >
+      <span style={{ fontFamily: "'Playfair Display', serif", fontSize: "28px", color: "var(--gold)", fontWeight: 700, lineHeight: 1 }}>
+        {value}
+      </span>
+      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--date-color)", marginTop: "4px" }}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * ProgressBar — 4px completion bar; width % is the only dynamic style.
  */
 function ProgressBar({ percent }) {
   const safe = Math.max(0, Math.min(100, percent || 0));
   return (
-    <div className="w-full h-[6px] bg-hover rounded-4px overflow-hidden">
-      <div
-        className="h-full bg-gold transition-[width] duration-300"
-        // Necessary exception: dynamic numeric width cannot be
-        // expressed as a Tailwind utility. Colour stays a token.
-        style={{ width: `${safe}%` }}
-      />
+    <div style={{ height: "4px", width: "100%", background: "var(--border)", borderRadius: "2px", overflow: "hidden" }}>
+      <div style={{ height: "4px", background: "var(--gold)", borderRadius: "2px", width: `${safe}%`, transition: "width 600ms ease" }} />
     </div>
   );
 }
 
-
-// ─────────────────────────────────────────────────────────────
-// SECTION COMPONENTS — VIEW 1 grid pieces
-// ─────────────────────────────────────────────────────────────
-
 /**
- * SessionMiniCard — one small card in the weekly grid.
- *
- * Props:
- *   session       – the timetable_entries row
- *   subjectMeta   – { key, name, code }
- *   onToggle()    – flip is_completed
- *   onContextMenu(x,y) – show edit/delete popover at coords
- *   onLongPress(x,y)   – same, triggered by 500 ms hold on touch
- *
- * The card detects right-click and long-press to show the same
- * context menu — see comments below the JSX.
+ * SessionMiniCard — grid session; click toggles completion (optimistic in parent).
  */
-function SessionMiniCard({ session, subjectMeta, onToggle, onShowContextMenu }) {
-  // longPressTriggeredRef tracks whether the most recent
-  // pointerdown turned into a long-press. If yes, the subsequent
-  // click event is silently swallowed so the card doesn't ALSO
-  // toggle completion. Without this, touch users would
-  // accidentally complete sessions while opening the menu.
-  const longPressTimerRef = useRef(null);
-  const longPressTriggeredRef = useRef(false);
-
-  const handlePointerDown = (e) => {
-    longPressTriggeredRef.current = false;
-    // Only arm the timer for touch / pen — mouse users get the
-    // native right-click handler instead, which is more reliable.
-    if (e.pointerType === "mouse") return;
-    const x = e.clientX;
-    const y = e.clientY;
-    longPressTimerRef.current = setTimeout(() => {
-      longPressTriggeredRef.current = true;
-      onShowContextMenu(x, y);
-    }, LONG_PRESS_MS);
-  };
-
-  const cancelLongPress = () => {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-  };
-
-  const handleClick = (e) => {
-    if (longPressTriggeredRef.current) {
-      // Long-press already opened the menu — suppress this click.
-      longPressTriggeredRef.current = false;
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-    onToggle();
-  };
-
-  const handleContextMenu = (e) => {
-    e.preventDefault();
-    onShowContextMenu(e.clientX, e.clientY);
-  };
-
+function SessionMiniCard({ session, subjectMeta, onToggle }) {
   const subjectKey = subjectMeta?.key || "economics";
   const completed = !!session.is_completed;
-
-  // Two visual modes:
-  //   incomplete → cardBg + inputBorder
-  //   completed  → hover bg + line-through + 0.5 opacity
-  const visualClasses = completed
-    ? "bg-hover border-input-border opacity-50"
-    : "bg-card border-input-border";
-
   return (
     <button
       type="button"
-      onClick={handleClick}
-      onContextMenu={handleContextMenu}
-      onPointerDown={handlePointerDown}
-      onPointerUp={cancelLongPress}
-      onPointerLeave={cancelLongPress}
-      onPointerCancel={cancelLongPress}
-      onPointerMove={cancelLongPress}
+      onClick={onToggle}
       aria-label={`Toggle completion for ${session.title}`}
-      className={
-        "w-full text-left rounded-4px border p-2 transition-colors " +
-        "hover:border-gold focus:outline-none focus:ring-2 " +
-        "focus:ring-gold/30 select-none " +
-        visualClasses
-      }
+      style={{
+        width: "100%",
+        textAlign: "left",
+        background: "var(--card)",
+        border: "0.5px solid var(--gold-border-hover)",
+        borderRadius: "6px",
+        padding: "10px 12px",
+        cursor: "pointer",
+        transition: "background 200ms, opacity 200ms",
+        opacity: completed ? 0.5 : 1,
+      }}
     >
-      <div className="mb-1">
-        <SubjectBadge
-          subject={subjectKey}
-          label={subjectMeta?.name || "Subject"}
-        />
-      </div>
-      <p
-        className={
-          "font-body font-body-semibold text-xs text-text-primary leading-tight " +
-          (completed ? "line-through" : "")
-        }
-      >
+      <SubjectBadge subject={subjectKey} label={subjectMeta?.name || "Subject"} />
+      <p style={{ fontFamily: "Inter, sans-serif", fontSize: "12px", color: "var(--text)", marginTop: "4px", lineHeight: 1.3, textDecoration: completed ? "line-through" : "none", marginBottom: 0 }}>
         {session.title}
       </p>
-      <p className="font-body text-text-muted text-[11px] mt-1">
+      <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--text-muted)", marginTop: "4px", marginBottom: 0 }}>
         {formatTimeRange(session.start_time, session.end_time)}
       </p>
     </button>
@@ -811,108 +773,81 @@ function SessionMiniCard({ session, subjectMeta, onToggle, onShowContextMenu }) 
 }
 
 /**
- * EmptyDayCard — placeholder shown in a day column when no
- * sessions exist for that day. A dashed border with a centred +
- * icon. Click opens VIEW 3 with the day's date pre-filled.
+ * AddSessionButton — dashed + circle; shows coming-soon toast for now.
  */
-function EmptyDayCard({ onClick }) {
+function AddSessionButton({ onClick }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label="Add session for this day"
-      className={
-        "w-full rounded-4px border-2 border-dashed border-hover " +
-        "text-hover hover:text-gold hover:border-gold " +
-        "transition-colors flex items-center justify-center " +
-        "py-6 focus:outline-none focus:ring-2 focus:ring-gold/30"
-      }
+      aria-label="Add session"
+      className="timetable-add-session-btn"
+      style={{
+        width: "24px",
+        height: "24px",
+        borderRadius: "50%",
+        background: "transparent",
+        border: "0.5px dashed var(--gold-border-hover)",
+        color: "var(--text-muted)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        padding: 0,
+      }}
     >
-      <Plus size={20} aria-hidden="true" />
+      <Plus size={12} strokeWidth={2} aria-hidden />
     </button>
   );
 }
 
 /**
- * DayColumn — one of the seven columns in the weekly grid.
- * Shows the day header (clickable → VIEW 2) and a vertical list
- * of session cards, with a "+" footer button or empty card at
- * the end of the list.
+ * DayColumn — one day in the 7-column week grid.
+ * Today detection: isToday(date) highlights the day number in gold.
  */
-function DayColumn({
-  date,
-  sessions,
-  subjectIndex,
-  onOpenDay,
-  onToggleSession,
-  onShowContextMenu,
-  onAddSession,
-}) {
+function DayColumn({ date, sessions, subjectIndex, onToggleSession, onAddSession }) {
   const today = isToday(date);
+  const dayLabel = DAY_LABELS_SHORT[(date.getDay() + 6) % 7];
   return (
-    <div className="flex-shrink-0 w-full min-w-[140px] md:min-w-0">
-      {/* ── Day header (clickable, goes to VIEW 2) ───────────── */}
-      <button
-        type="button"
-        onClick={() => onOpenDay(date)}
-        className={
-          "w-full text-left mb-3 focus:outline-none focus:ring-2 " +
-          "focus:ring-gold/30 rounded-4px"
-        }
-        aria-label={`Open ${formatLongDate(date)} detail view`}
-      >
-        <p className="font-body text-text-muted text-xs uppercase tracking-wide">
-          {DAY_LABELS_SHORT[(date.getDay() + 6) % 7]}
+    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+      <div style={{ textAlign: "center", marginBottom: "4px" }}>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--text-muted)", margin: 0 }}>
+          {dayLabel}
         </p>
-        <span
-          className={
-            "inline-block mt-1 font-body font-body-semibold text-base " +
-            (today
-              ? "bg-gold text-background rounded-4px px-2 py-0.5"
-              : "text-text-primary px-0")
-          }
-        >
-          {date.getDate()}
-        </span>
-      </button>
-
-      {/* ── Sessions stack for this day ─────────────────────── */}
-      <div className="flex flex-col gap-2">
-        {sessions.length === 0 ? (
-          <EmptyDayCard onClick={() => onAddSession(date)} />
+        {today ? (
+          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "32px", height: "32px", marginTop: "4px", background: "var(--gold)", borderRadius: "50%", color: "var(--bg)", fontFamily: "Inter, sans-serif", fontSize: "20px", fontWeight: 700 }}>
+            {date.getDate()}
+          </span>
         ) : (
-          <>
-            {sessions.map((s) => (
-              <SessionMiniCard
-                key={s.id}
-                session={s}
-                subjectMeta={subjectIndex.byId[s.subject_id]}
-                onToggle={() => onToggleSession(s)}
-                onShowContextMenu={(x, y) => onShowContextMenu(x, y, s)}
-              />
-            ))}
-            {/* "+" button below the populated stack so the user
-                can quickly add more sessions to a busy day. */}
-            <button
-              type="button"
-              onClick={() => onAddSession(date)}
-              aria-label="Add another session for this day"
-              className={
-                "w-full rounded-4px border border-dashed border-hover " +
-                "text-text-muted hover:text-gold hover:border-gold " +
-                "transition-colors flex items-center justify-center " +
-                "py-1.5 focus:outline-none focus:ring-2 focus:ring-gold/30"
-              }
-            >
-              <Plus size={14} aria-hidden="true" />
-            </button>
-          </>
+          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "20px", fontWeight: 600, color: "var(--text)", margin: "4px 0 0" }}>
+            {date.getDate()}
+          </p>
         )}
       </div>
+      {sessions.map((s) => (
+        <SessionMiniCard
+          key={s.id}
+          session={s}
+          subjectMeta={subjectIndex.byId[s.subject_id]}
+          onToggle={() => onToggleSession(s)}
+        />
+      ))}
+      <AddSessionButton onClick={() => onAddSession(date)} />
     </div>
   );
 }
 
+/** Skeleton column while GET /timetable/entries is loading */
+function DayColumnSkeleton() {
+  const sk = { background: "var(--card)", borderRadius: "6px", animation: "timetable-pulse 1.5s ease-in-out infinite" };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+      <div style={{ ...sk, height: "40px" }} />
+      <div style={{ ...sk, height: "80px" }} />
+      <div style={{ ...sk, height: "80px" }} />
+    </div>
+  );
+}
 
 // ─────────────────────────────────────────────────────────────
 // SECTION COMPONENTS — VIEW 2 day-detail pieces
@@ -2537,7 +2472,7 @@ export default function TimetablePage() {
   // ───────────────────────────────────────────────────────────
   if (!authReady) {
     return (
-      <main className="min-h-screen bg-background flex items-center justify-center">
+      <main style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div className="inline-flex items-center gap-2 text-text-muted font-body text-sm">
           <Loader2 size={16} className="animate-spin" aria-hidden="true" />
           Loading your timetable…
@@ -2732,229 +2667,119 @@ export default function TimetablePage() {
   }
 
 
+
   // ───────────────────────────────────────────────────────────
-  // RENDER — VIEW 1 (weekly overview)
+  // RENDER — VIEW 1 (weekly overview) — mockup layout
   // ───────────────────────────────────────────────────────────
   const weekDates = getWeekDates(currentWeekStart);
   const weekIsEmpty = entries.length === 0 && !entriesLoading;
+  const weekRangeLabel = formatWeekRange(currentWeekStart);
+  const totalStudyHours = (entries.length * 1.5).toFixed(1);
+
+  const handleAddSessionComingSoon = () => {
+    setToast({ tone: "success", message: "Coming soon" });
+  };
 
   return (
-    <main className="min-h-screen bg-background">
-      <div className="max-w-7xl mx-auto px-4 sm:px-8 py-6">
-        {/* Unified shared page header. The subtitle is the current
-            week range string so the user always knows which week
-            they're looking at. Generate Now sits in the action
-            slot so it matches every other page's primary CTA. */}
-        <PageHeader
-          title="My Timetable"
-          subtitle={formatWeekRange(currentWeekStart)}
-          action={
-            <button
-              type="button"
-              onClick={handleGenerateNow}
-              disabled={isGenerating}
-              // Primary button — gold filled, unified style (Task 10).
-              className={
-                "inline-flex items-center gap-2 px-5 py-2.5 " +
-                "rounded-4px bg-gold text-background font-body " +
-                "font-body-semibold text-sm transition " +
-                "hover:brightness-90 focus-visible:outline-none " +
-                "focus-visible:ring-2 focus-visible:ring-gold " +
-                "focus-visible:ring-offset-2 " +
-                "focus-visible:ring-offset-background " +
-                "disabled:opacity-60 disabled:cursor-not-allowed"
-              }
-            >
-              {isGenerating ? (
-                <Loader2 size={16} aria-hidden="true" className="animate-spin" />
-              ) : (
-                <RefreshCw size={16} aria-hidden="true" />
-              )}
-              Generate Now
-            </button>
-          }
-        />
+    <main style={{ minHeight: "100vh", background: "var(--bg)" }}>
+      <style>{`
+        @keyframes timetable-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+        .timetable-stats-grid { margin: 20px var(--page-padding) 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+        .timetable-week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+        .timetable-add-session-btn:hover { border-color: var(--gold) !important; color: var(--gold) !important; }
+        .timetable-week-nav-btn:hover { border-color: var(--gold) !important; color: var(--gold) !important; }
+        @media (max-width: 1023px) {
+          .timetable-week-grid-wrap { overflow-x: auto; }
+          .timetable-week-grid { grid-template-columns: repeat(7, minmax(120px, 1fr)); min-width: 840px; }
+        }
+        @media (max-width: 767px) {
+          .timetable-stats-grid { grid-template-columns: repeat(2, 1fr); }
+          .timetable-week-nav-btn { width: 28px !important; height: 28px !important; }
+        }
+      `}</style>
 
-        {/* ── Week navigation row ────────────────────────── */}
-        <nav
-          aria-label="Week navigation"
-          className="flex items-center justify-center gap-3 mb-6"
-        >
-          <button
-            type="button"
-            onClick={goPrevWeek}
-            aria-label="Previous week"
-            className={
-              "p-2 rounded-4px text-text-muted hover:text-gold " +
-              "hover:bg-hover transition-colors focus:outline-none " +
-              "focus:ring-2 focus:ring-gold/30"
-            }
-          >
-            <ChevronLeft size={18} aria-hidden="true" />
-          </button>
-          <p className="font-body text-text-muted text-sm">
-            {formatWeekRange(currentWeekStart)}
-          </p>
-          <button
-            type="button"
-            onClick={goNextWeek}
-            aria-label="Next week"
-            className={
-              "p-2 rounded-4px text-text-muted hover:text-gold " +
-              "hover:bg-hover transition-colors focus:outline-none " +
-              "focus:ring-2 focus:ring-gold/30"
-            }
-          >
-            <ChevronRight size={18} aria-hidden="true" />
-          </button>
-        </nav>
+      <TimetableBreadcrumb />
 
-        {/* ── Body: either the empty state OR (stats + grid) ── */}
-        {entriesLoading ? (
-          <section
-            aria-label="Loading timetable"
-            className="flex items-center justify-center py-20 text-text-muted font-body text-sm"
-          >
-            <Loader2 size={16} className="animate-spin mr-2" aria-hidden="true" />
-            Loading this week's sessions…
+      <header style={{ padding: "20px var(--page-padding) 0", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px", flexWrap: "wrap" }}>
+        <div>
+          <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: "28px", color: "var(--text)", fontWeight: 700, margin: 0 }}>My Timetable</h1>
+          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-muted)", marginTop: "4px", marginBottom: 0 }}>{weekRangeLabel}</p>
+        </div>
+        <button type="button" onClick={handleGenerateNow} disabled={isGenerating} style={{ background: "var(--gold)", border: "none", borderRadius: "8px", padding: "10px 18px", fontFamily: "Inter, sans-serif", fontSize: "13px", fontWeight: 500, color: "var(--bg)", cursor: isGenerating ? "wait" : "pointer", display: "flex", alignItems: "center", gap: "8px", opacity: isGenerating ? 0.7 : 1 }}>
+          {isGenerating ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <RefreshCw size={14} aria-hidden />}
+          {isGenerating ? "Generating..." : "Generate Now"}
+        </button>
+      </header>
+
+      {!entriesLoading && !weekIsEmpty && (
+        <>
+          <section aria-label="Weekly stats" className="timetable-stats-grid">
+            <StatCard value={weekStats.done} label="SESSIONS DONE" />
+            <StatCard value={weekStats.remaining} label="SESSIONS REMAINING" />
+            <StatCard value={`${totalStudyHours}h`} label="TOTAL STUDY HOURS" />
+            <StatCard value={`${weekStats.completionRate}%`} label="COMPLETION RATE" />
           </section>
-        ) : weekIsEmpty ? (
-          // ── EMPTY WEEK STATE ────────────────────────────
-          <section
-            aria-label="No timetable for this week"
-            className={
-              "max-w-xl mx-auto bg-card border border-input-border " +
-              "rounded-4px p-6 sm:p-8 text-center"
-            }
-          >
-            <Calendar
-              size={40}
-              aria-hidden="true"
-              className="text-gold mx-auto mb-3"
-            />
-            <h2 className="font-heading text-text-primary text-2xl font-heading-bold">
-              No timetable yet
-            </h2>
-            <p className="font-body text-text-muted text-sm mt-2 leading-relaxed">
-              Your timetable is automatically generated every Sunday based on
-              your exam dates and study hours. Check back after Sunday or
-              generate it now.
+          <section aria-label="Weekly progress" style={{ margin: "16px var(--page-padding) 0" }}>
+            <ProgressBar percent={weekStats.completionRate} />
+            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "11px", color: "var(--text-muted)", marginTop: "6px", marginBottom: 0 }}>
+              {weekStats.done} of {entries.length} sessions completed this week
             </p>
-            <button
-              type="button"
-              onClick={handleGenerateNow}
-              disabled={isGenerating}
-              className={
-                "mt-5 w-full inline-flex items-center justify-center gap-2 " +
-                "px-4 py-3 rounded-4px bg-gold text-background font-body " +
-                "font-body-semibold text-sm hover:bg-gold-light " +
-                "transition-colors focus:outline-none focus:ring-2 " +
-                "focus:ring-gold/30 disabled:opacity-60"
-              }
-            >
-              {isGenerating ? (
-                <Loader2
-                  size={16}
-                  aria-hidden="true"
-                  className="animate-spin"
-                />
-              ) : (
-                <RefreshCw size={16} aria-hidden="true" />
-              )}
-              Generate Now
-            </button>
-            <button
-              type="button"
-              onClick={() => openAddModal(new Date())}
-              className={
-                "mt-3 text-text-muted font-body text-sm hover:text-gold " +
-                "transition-colors focus:outline-none focus:underline"
-              }
-            >
-              or add sessions manually
-            </button>
           </section>
-        ) : (
-          <>
-            {/* ── Stats row (4 cards) ─────────────────────── */}
-            <section
-              aria-label="Weekly progress stats"
-              className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4"
-            >
-              <StatCard value={weekStats.done} label="Sessions done" />
-              <StatCard
-                value={weekStats.remaining}
-                label="Sessions remaining"
-              />
-              <StatCard
-                value={`${weekStats.totalHours}h`}
-                label="Total study hours"
-              />
-              <StatCard
-                value={`${weekStats.completionRate}%`}
-                label="Completion rate"
-              />
-            </section>
+        </>
+      )}
 
-            {/* ── Progress bar + caption ─────────────────── */}
-            <section aria-label="Weekly progress bar" className="mb-8">
-              <ProgressBar percent={weekStats.completionRate} />
-              <p className="font-body text-text-muted text-xs mt-2">
-                {weekStats.done} of {entries.length} sessions completed this
-                week
-              </p>
-            </section>
+      <nav aria-label="Week navigation" style={{ margin: "16px var(--page-padding) 0", display: "flex", alignItems: "center", justifyContent: "center", gap: "16px" }}>
+        <button type="button" className="timetable-week-nav-btn" onClick={goPrevWeek} aria-label="Previous week" style={{ width: "32px", height: "32px", borderRadius: "50%", background: "var(--card)", border: "0.5px solid var(--gold-border)", color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 }}>
+          <ChevronLeft size={16} strokeWidth={2} aria-hidden />
+        </button>
+        <span style={{ fontFamily: "Inter, sans-serif", fontSize: "14px", fontWeight: 500, color: "var(--text)" }}>{weekRangeLabel}</span>
+        <button type="button" className="timetable-week-nav-btn" onClick={goNextWeek} aria-label="Next week" style={{ width: "32px", height: "32px", borderRadius: "50%", background: "var(--card)", border: "0.5px solid var(--gold-border)", color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 }}>
+          <ChevronRight size={16} strokeWidth={2} aria-hidden />
+        </button>
+      </nav>
 
-            {/* ── Weekly grid ─────────────────────────────
-                Desktop  : 7 equal columns side-by-side.
-                Mobile   : horizontal scroll with min-w-[140px]
-                            per column so columns never collapse. */}
-            <section
-              aria-label="Weekly grid"
-              className={
-                "overflow-x-auto md:overflow-visible -mx-4 px-4 " +
-                "md:-mx-0 md:px-0"
-              }
-            >
-              <div
-                className={
-                  "grid grid-flow-col auto-cols-[140px] gap-3 " +
-                  "md:grid-flow-row md:auto-cols-auto md:grid-cols-7"
-                }
-              >
-                {weekDates.map((d) => {
-                  const key = toDateKey(d);
-                  const list = sessionsByDay[key] || [];
-                  return (
-                    <DayColumn
-                      key={key}
-                      date={d}
-                      sessions={list}
-                      subjectIndex={subjectIndex}
-                      onOpenDay={(date) => {
-                        setSelectedDay(date);
-                        setCurrentView("daily");
-                      }}
-                      onToggleSession={handleToggleCompletion}
-                      onShowContextMenu={(x, y, session) =>
-                        setContextMenu({ x, y, session })
-                      }
-                      onAddSession={(date) => openAddModal(date)}
-                    />
-                  );
-                })}
-              </div>
-            </section>
-
-            {usingMock && (
-              <p className="mt-6 text-xs text-text-hint text-center font-body">
-                Showing sample sessions while your timetable is being set up.
-                Real entries will replace these once the auto-generator runs.
-              </p>
-            )}
-          </>
-        )}
-      </div>
+      {entriesLoading ? (
+        <section aria-label="Loading timetable" className="timetable-week-grid-wrap" style={{ margin: "16px var(--page-padding) 32px" }}>
+          <div className="timetable-week-grid">
+            {Array.from({ length: 7 }).map((_, i) => (
+              <DayColumnSkeleton key={i} />
+            ))}
+          </div>
+        </section>
+      ) : weekIsEmpty ? (
+        <section aria-label="No timetable" style={{ margin: "16px var(--page-padding) 32px", textAlign: "center", padding: "40px 24px", background: "var(--card)", border: "0.5px solid var(--gold-border)", borderRadius: "10px" }}>
+          <Calendar size={40} color="var(--gold)" aria-hidden style={{ margin: "0 auto 12px", display: "block" }} />
+          <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: "22px", color: "var(--text)", margin: "0 0 8px" }}>No timetable yet</h2>
+          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>Generate your study schedule for the next two weeks.</p>
+          <button type="button" onClick={handleGenerateNow} disabled={isGenerating} style={{ marginTop: "16px", background: "var(--gold)", border: "none", borderRadius: "8px", padding: "10px 18px", fontFamily: "Inter, sans-serif", fontSize: "13px", fontWeight: 500, color: "var(--bg)", cursor: "pointer" }}>
+            {isGenerating ? "Generating..." : "Generate Now"}
+          </button>
+        </section>
+      ) : (
+        <section aria-label="Weekly grid" className="timetable-week-grid-wrap" style={{ margin: "16px var(--page-padding) 32px" }}>
+          <div className="timetable-week-grid">
+            {weekDates.map((d) => {
+              const key = toDateKey(d);
+              const list = sessionsByDay[key] || [];
+              return (
+                <DayColumn
+                  key={key}
+                  date={d}
+                  sessions={list}
+                  subjectIndex={subjectIndex}
+                  onToggleSession={handleToggleCompletion}
+                  onAddSession={handleAddSessionComingSoon}
+                />
+              );
+            })}
+          </div>
+          {usingMock && (
+            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "12px", color: "var(--text-muted)", textAlign: "center", marginTop: "16px" }}>
+              Showing sample sessions while your timetable is being set up.
+            </p>
+          )}
+        </section>
+      )}
 
       {/* ── Overlays (modal / delete confirm / context menu) ─ */}
       {modal && (

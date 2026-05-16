@@ -1,6 +1,6 @@
 // ============================================================
 // FILE: app/onboarding/welcome/page.js
-// PURPOSE: Onboarding Step 1 – Welcome screen
+// PURPOSE: Onboarding Step 1 — Welcome screen with subject preview.
 // URL: /onboarding/welcome
 // ============================================================
 
@@ -8,12 +8,19 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import { SUBJECTS } from "../../../lib/subjects";
+import SubjectBadge from "../../components/SubjectBadge";
+import {
+  OnboardingShell,
+  OnboardingHeading,
+  OnboardingSubheading,
+  ContinueButton,
+} from "../onboarding-ui";
 
 export default function OnboardingWelcome() {
   const router = useRouter();
 
-  // Check if user already completed onboarding
+  // Redirect to dashboard if onboarding was already completed.
   useEffect(() => {
     const completed = localStorage.getItem("ascendai_onboarding_completed");
     if (completed === "true") {
@@ -22,49 +29,92 @@ export default function OnboardingWelcome() {
   }, [router]);
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-background px-4">
-      <div className="max-w-2xl w-full bg-white rounded-4px shadow-lg border border-hover overflow-hidden">
-        {/* Progress bar – 20% (step 1 of 5) */}
-        <div className="h-1 bg-hover">
-          <div className="h-full w-1/5 bg-gold"></div>
-        </div>
-
-        <div className="p-8 md:p-10">
-          {/* Step indicator */}
-          <div className="text-gold text-xs font-semibold uppercase tracking-wider mb-2">
-            Step 1 of 5
-          </div>
-
-          {/* Heading */}
-          <h1 className="font-heading text-3xl md:text-4xl font-bold text-text-primary mb-3">
-            Welcome to AscendAI
-          </h1>
-
-          {/* Subtitle with gold left border */}
-          <p className="text-text-muted text-base mb-6 border-l-3 border-gold pl-3">
-            Your intelligent Cambridge AS Level study companion
-          </p>
-
-          {/* Feature list */}
-          <div className="space-y-3 text-text-primary">
-            <p>✨ AI‑powered homework answers in Cambridge format</p>
-            <p>📄 Automatic note summarisation from Google Classroom</p>
-            <p>🃏 Adaptive flashcards with spaced repetition</p>
-            <p>📅 Intelligent weekly timetable based on exam dates</p>
-            <p>📖 Past paper solver with step‑by‑step explanations</p>
-          </div>
-
-          {/* Navigation button to step 2 */}
-          <div className="mt-8 flex justify-end">
-            <Link
-              href="/onboarding/exam-dates"
-              className="bg-gold text-white px-6 py-2 rounded-4px font-semibold hover:bg-gold/90 transition"
-            >
-              Get Started →
-            </Link>
-          </div>
-        </div>
+    <OnboardingShell step={1}>
+      {/* ── STEP 1 — Logo block ─────────────────────────────── */}
+      <div style={{ textAlign: "center", marginBottom: "32px" }}>
+        <p
+          style={{
+            fontFamily: "'Playfair Display', serif",
+            fontSize: "28px",
+            color: "var(--gold)",
+            margin: 0,
+            fontWeight: 700,
+          }}
+        >
+          AscendAI
+        </p>
+        <p
+          style={{
+            fontFamily: "Inter, sans-serif",
+            fontSize: "12px",
+            color: "var(--gold-text-dim)",
+            marginTop: "4px",
+            marginBottom: 0,
+          }}
+        >
+          by Shivora
+        </p>
       </div>
-    </main>
+
+      <OnboardingHeading>Welcome to AscendAI</OnboardingHeading>
+      <OnboardingSubheading>Your Cambridge AS Level AI study assistant</OnboardingSubheading>
+
+      {/* ── STEP 1 — 2×2 subject badge grid ─────────────────── */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "12px",
+          marginBottom: "24px",
+        }}
+      >
+        {SUBJECTS.map((subject) => (
+          <div
+            key={subject.key}
+            style={{
+              background: "var(--card)",
+              border: "0.5px solid var(--gold-border-hover)",
+              borderRadius: "8px",
+              padding: "12px 16px",
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+            }}
+          >
+            <SubjectBadge subject={subject.key} label={subject.name} />
+            <span style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text)" }}>
+              {subject.fullName}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* ── STEP 1 — Welcome message card ───────────────────── */}
+      <div
+        style={{
+          background: "var(--nav-icon-bg)",
+          border: "0.5px solid var(--chat-bubble-border)",
+          borderLeft: "2px solid var(--gold)",
+          borderRadius: "6px",
+          padding: "14px 16px",
+          marginBottom: "8px",
+        }}
+      >
+        <p
+          style={{
+            fontFamily: "Inter, sans-serif",
+            fontSize: "13px",
+            color: "var(--text-dim)",
+            lineHeight: 1.6,
+            margin: 0,
+          }}
+        >
+          Let&apos;s set up your personalised study experience. This takes less than 2 minutes.
+        </p>
+      </div>
+
+      {/* ── STEP 1 — Continue to exam dates ─────────────────── */}
+      <ContinueButton href="/onboarding/exam-dates">Get Started →</ContinueButton>
+    </OnboardingShell>
   );
 }

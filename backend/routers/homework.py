@@ -63,6 +63,7 @@
 # from the backend .env file. `Optional[X]` lets a Pydantic field
 # be either an X or None.
 import os
+import re
 from typing import List, Optional, Tuple
 
 # ── FastAPI imports ──────────────────────────────────────────
@@ -130,6 +131,10 @@ GROQ_TEMPERATURE = 0.3
 # rename is a single-line change.
 HOMEWORK_TABLE = "homework_questions"
 SUBJECTS_TABLE = "subjects"
+# Essay Checker persistence — one row per check-essay call.
+ESSAY_CHECKS_TABLE = "essay_checks"
+# How many past essay checks the history endpoint returns.
+ESSAY_HISTORY_LIMIT = 20
 
 
 # ============================================================
@@ -1237,3 +1242,599 @@ def adjust_homework(
         topic_tag=topic_tag,
         saved=saved,
     )
+
+
+# ============================================================
+# ESSAY CHECKER — request / response models
+# ============================================================
+
+ALLOWED_ESSAY_MARKS = (8, 10, 12)
+
+# Groq settings for essay marking — lower temperature for consistency.
+ESSAY_CHECK_MAX_TOKENS = 1200
+ESSAY_CHECK_TEMPERATURE = 0.3
+
+# Cambridge senior examiner persona for long-answer marking.
+ESSAY_CHECK_SYSTEM_PROMPT = """
+You are a Senior Cambridge International AS Level Examiner
+with 20 years of experience marking Economics, Business
+Studies, English Language, and ICT papers.
+
+You have marked thousands of scripts and know exactly what
+separates a Band 1 answer from a Band 4 answer.
+
+Your job is to evaluate the student's answer with brutal
+honesty but genuine care — like the best teacher they
+have ever had.
+
+You understand that this student is in Zambia, studying
+hard, and needs specific actionable feedback — not vague
+encouragement.
+
+CAMBRIDGE MARKING PRINCIPLES YOU ALWAYS APPLY:
+- Definition: Is the key term defined precisely?
+- Knowledge: Are facts, concepts, and theories accurate?
+- Application: Is the answer applied to the context given?
+- Analysis: Are chains of reasoning developed fully?
+  (cause → effect → further effect → so what?)
+- Evaluation: Are judgements made with justification?
+  (For 10+ mark questions only)
+- Structure: Is the answer logically organised?
+- Examples: Are relevant real-world examples used?
+
+BAND DESCRIPTORS YOU USE:
+For 8 mark questions:
+- Band 4 (7-8): Precise definition, thorough analysis,
+  excellent application, well-structured
+- Band 3 (5-6): Good knowledge, some analysis,
+  limited evaluation
+- Band 2 (3-4): Basic knowledge, limited analysis,
+  weak application
+- Band 1 (1-2): Minimal relevant content
+
+For 10 mark questions:
+- Band 4 (9-10): All of above plus strong evaluation
+- Band 3 (7-8): Good analysis, some evaluation
+- Band 2 (4-6): Basic knowledge and analysis
+- Band 1 (1-3): Minimal relevant content
+
+For 12 mark questions:
+- Band 4 (10-12): Exceptional — definition, analysis,
+  evaluation, structured argument, real examples
+- Band 3 (7-9): Good but missing evaluation depth
+- Band 2 (4-6): Some knowledge, weak analysis
+- Band 1 (1-3): Minimal relevant content
+
+OUTPUT FORMAT — respond in this EXACT structure
+with these EXACT headers, nothing else:
+
+GRADE_BAND: [Band number] — [mark range] out of [total]
+BAND_LABEL: [one phrase — e.g. "Strong answer with good analysis"]
+ESTIMATED_MARKS: [single number — your best estimate]
+
+WHAT_YOU_DID_WELL:
+[Point 1 — specific and referenced to their actual answer]
+[Point 2 — specific and referenced to their actual answer]
+[Point 3 — specific and referenced to their actual answer]
+
+WHAT_IS_MISSING:
+[Point 1 — specific gap with explanation of why it matters]
+[Point 2 — specific gap with explanation of why it matters]
+[Point 3 — specific gap with explanation of why it matters]
+
+EXAMINER_FEEDBACK:
+[Write exactly what a Cambridge examiner would write
+on this script — 3-4 sentences, honest and specific.
+Reference the student's actual content.
+Use phrases like "The candidate demonstrates...",
+"However, the response lacks...",
+"To achieve full marks..."]
+
+MODEL_PARAGRAPH:
+[Rewrite ONE paragraph from their answer showing exactly
+how it should look at full marks. Use the student's own
+topic but elevate the language, structure, and depth.
+Show what a Band 4 paragraph looks like.
+Begin with: "Here is how this paragraph could be written
+for full marks:"]
+
+Be specific. Be honest. Be helpful.
+Never be vague. Never just say "good job".
+Always reference what the student actually wrote.
+"""
+
+
+class EssayCheckRequest(BaseModel):
+    """JSON body the frontend POSTs to /homework/check-essay."""
+
+    subject: str = Field(..., min_length=1, description="Subject label, e.g. Economics 9708.")
+    question: str = Field(..., min_length=1, description="The exam question text.")
+    answer: str = Field(..., min_length=1, description="The student's essay answer.")
+    marks: int = Field(..., description="Total marks available (8, 10, or 12).")
+
+
+class EssayCheckResponse(BaseModel):
+    """Structured Cambridge marking feedback for an essay answer."""
+
+    grade_band: str
+    band_label: str
+    estimated_marks: int
+    what_did_well: List[str]
+    what_is_missing: List[str]
+    examiner_feedback: str
+    model_paragraph: str
+    error: Optional[str] = None
+
+
+def _parse_essay_section_lines(block: str) -> List[str]:
+    """
+    Turn a multi-line feedback block into a list of bullet strings.
+
+    Strips leading brackets like "[Point 1 — ...]" so the frontend
+  can render clean list items.
+    """
+
+    items: List[str] = []
+    for line in (block or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Remove common list prefixes the model might emit.
+        stripped = re.sub(r"^\[[^\]]+\]\s*", "", stripped)
+        stripped = re.sub(r"^[-•*]\s*", "", stripped)
+        stripped = re.sub(r"^\d+[\.)]\s*", "", stripped)
+        if stripped:
+            items.append(stripped)
+    return items
+
+
+def _parse_essay_check_response(raw: str) -> dict:
+    """
+    Split the Groq plain-text reply on the required headers and
+    map each section into the EssayCheckResponse fields.
+    """
+
+    text = (raw or "").strip()
+    headers = [
+        "GRADE_BAND",
+        "BAND_LABEL",
+        "ESTIMATED_MARKS",
+        "WHAT_YOU_DID_WELL",
+        "WHAT_IS_MISSING",
+        "EXAMINER_FEEDBACK",
+        "MODEL_PARAGRAPH",
+    ]
+
+    # Build a regex that captures header positions in order.
+    pattern = r"(?m)^(" + "|".join(re.escape(h) for h in headers) + r")\s*:?\s*"
+    parts = re.split(pattern, text)
+
+    sections: dict = {}
+    i = 1
+    while i < len(parts) - 1:
+        key = parts[i].strip().upper()
+        body = parts[i + 1].strip() if i + 1 < len(parts) else ""
+        sections[key] = body
+        i += 2
+
+    grade_band = sections.get("GRADE_BAND", "").strip()
+    band_label = sections.get("BAND_LABEL", "").strip()
+
+    # Parse the single-number mark estimate; default to 0 on failure.
+    marks_raw = sections.get("ESTIMATED_MARKS", "0").strip()
+    marks_match = re.search(r"\d+", marks_raw)
+    estimated_marks = int(marks_match.group(0)) if marks_match else 0
+
+    return {
+        "grade_band": grade_band,
+        "band_label": band_label,
+        "estimated_marks": estimated_marks,
+        "what_did_well": _parse_essay_section_lines(
+            sections.get("WHAT_YOU_DID_WELL", "")
+        ),
+        "what_is_missing": _parse_essay_section_lines(
+            sections.get("WHAT_IS_MISSING", "")
+        ),
+        "examiner_feedback": sections.get("EXAMINER_FEEDBACK", "").strip(),
+        "model_paragraph": sections.get("MODEL_PARAGRAPH", "").strip(),
+    }
+
+
+@router.post(
+    "/check-essay",
+    response_model=EssayCheckResponse,
+    summary="Mark a Cambridge AS Level long answer or essay",
+)
+def check_essay(
+    body: EssayCheckRequest,
+    verified_user_id: str = Depends(verify_bearer_token),
+):
+    """
+    Mark a student's long answer using a senior-examiner Groq prompt.
+
+    Flow:
+      1. Validate marks (8, 10, or 12 only).
+      2. Build system + user prompts with subject, question, marks.
+      3. Call Groq (llama-3.3-70b-versatile, 1200 tokens, temp 0.3).
+      4. Parse the structured header response into JSON fields.
+    """
+
+    # Bearer auth only — verified_user_id ensures the caller is signed in.
+    _ = verified_user_id
+
+    if body.marks not in ALLOWED_ESSAY_MARKS:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": f"marks must be one of: {', '.join(str(m) for m in ALLOWED_ESSAY_MARKS)}",
+            },
+        )
+
+    subject = body.subject.strip()
+    question = body.question.strip()
+    answer = body.answer.strip()
+    marks = int(body.marks)
+
+    user_prompt = (
+        f"Subject: {subject}\n"
+        f"Question: {question}\n"
+        f"Marks Available: {marks}\n\n"
+        f"Student's Answer:\n{answer}\n\n"
+        "Evaluate this answer using the Cambridge marking criteria."
+    )
+
+    try:
+        from main import groq_client  # noqa: WPS433
+    except Exception as e:
+        print(f"[Homework] groq_client import failed: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "AI service unavailable. Please try again."},
+        )
+
+    try:
+        completion = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": ESSAY_CHECK_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=ESSAY_CHECK_MAX_TOKENS,
+            temperature=ESSAY_CHECK_TEMPERATURE,
+        )
+    except Exception as e:
+        print(f"[Homework] essay check Groq failed: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "AI service unavailable. Please try again."},
+        )
+
+    try:
+        raw_text = completion.choices[0].message.content or ""
+    except (AttributeError, IndexError) as e:
+        print(f"[Homework] essay check response shape unexpected: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "AI service unavailable. Please try again."},
+        )
+
+    parsed = _parse_essay_check_response(raw_text)
+
+    # ── Save essay check to Supabase (non-blocking). ─────────
+    # Same fire-and-forget pattern as POST /homework/ask — the
+    # student always receives feedback even if the insert fails.
+    try:
+        essay_insert_payload = {
+            "user_id": verified_user_id,
+            "subject": subject,
+            "question": question,
+            "original_answer": answer,
+            "marks_available": marks,
+            "grade_band": parsed["grade_band"],
+            "band_label": parsed["band_label"],
+            "estimated_marks": parsed["estimated_marks"],
+            "what_did_well": parsed["what_did_well"],
+            "what_is_missing": parsed["what_is_missing"],
+            "examiner_feedback": parsed["examiner_feedback"],
+            "model_paragraph": parsed["model_paragraph"],
+            "model_answer": None,
+        }
+        supabase.table(ESSAY_CHECKS_TABLE).insert(essay_insert_payload).execute()
+    except Exception as e:
+        print(
+            f"[Homework] essay_checks insert failed: {type(e).__name__}: {e}. "
+            "Run backend/migrations/essay_checks.sql in Supabase if the table is missing."
+        )
+
+    return EssayCheckResponse(
+        grade_band=parsed["grade_band"],
+        band_label=parsed["band_label"],
+        estimated_marks=parsed["estimated_marks"],
+        what_did_well=parsed["what_did_well"],
+        what_is_missing=parsed["what_is_missing"],
+        examiner_feedback=parsed["examiner_feedback"],
+        model_paragraph=parsed["model_paragraph"],
+        error=None,
+    )
+
+
+# ============================================================
+# MODEL ANSWER GENERATOR — request / response models
+# ============================================================
+
+# Groq settings for full Band 4 model answers — longer output cap.
+MODEL_ANSWER_MAX_TOKENS = 1500
+MODEL_ANSWER_TEMPERATURE = 0.3
+
+# Tutor persona that rewrites the student's work at full-marks quality.
+MODEL_ANSWER_SYSTEM_PROMPT = """
+You are a Senior Cambridge International AS Level Examiner
+and expert tutor. A student has just received feedback on
+their essay answer. Your job is to write a complete model
+answer that incorporates all the improvements identified
+in the feedback.
+
+This model answer should:
+- Be written at Band 4 level — full marks quality
+- Use the student's original ideas and topic as the base
+- Fix every weakness identified in the feedback
+- Show exactly what a perfect Cambridge answer looks like
+- Include: precise definition, full analysis chains,
+  real-world examples, ceteris paribus where relevant,
+  evaluation points for 10+ mark questions
+- Be structured with clear logical flow
+- Use Cambridge examiner language and terminology
+- Be the length appropriate for the marks available:
+  8 marks: 3-4 well developed paragraphs
+  10 marks: 4-5 paragraphs with evaluation
+  12 marks: 5-6 paragraphs with strong evaluation
+
+Write ONLY the model answer — no preamble, no explanation.
+Start directly with the answer content.
+Write as if you are the student writing their best possible
+answer in an exam.
+"""
+
+
+class ModelAnswerRequest(BaseModel):
+    """JSON body the frontend POSTs to /homework/model-answer."""
+
+    subject: str = Field(..., min_length=1, description="Subject label, e.g. Economics 9708.")
+    question: str = Field(..., min_length=1, description="The exam question text.")
+    marks: int = Field(..., description="Total marks available (8, 10, or 12).")
+    original_answer: str = Field(..., min_length=1, description="Student's submitted answer.")
+    what_did_well: List[str] = Field(default_factory=list, description="Strengths from essay check.")
+    what_is_missing: List[str] = Field(default_factory=list, description="Gaps from essay check.")
+    examiner_feedback: str = Field(default="", description="Examiner summary from essay check.")
+
+
+class ModelAnswerResponse(BaseModel):
+    """Full Band 4 model answer generated from essay-check feedback."""
+
+    model_answer: str
+    error: Optional[str] = None
+
+
+@router.post(
+    "/model-answer",
+    response_model=ModelAnswerResponse,
+    summary="Generate a full Band 4 model answer from essay feedback",
+)
+def generate_model_answer(
+    body: ModelAnswerRequest,
+    verified_user_id: str = Depends(verify_bearer_token),
+):
+    """
+    Write a complete Cambridge model answer using essay-check feedback.
+
+    Flow:
+      1. Validate marks (8, 10, or 12 only).
+      2. Build user prompt from question, feedback lists, and original answer.
+      3. Call Groq (llama-3.3-70b-versatile, 1500 tokens, temp 0.3).
+      4. Return the plain-text model answer for the frontend to render.
+    """
+
+    # Bearer auth only — verified_user_id ensures the caller is signed in.
+    _ = verified_user_id
+
+    if body.marks not in ALLOWED_ESSAY_MARKS:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": f"marks must be one of: {', '.join(str(m) for m in ALLOWED_ESSAY_MARKS)}",
+            },
+        )
+
+    subject = body.subject.strip()
+    question = body.question.strip()
+    marks = int(body.marks)
+    original_answer = body.original_answer.strip()
+    what_did_well = body.what_did_well or []
+    what_is_missing = body.what_is_missing or []
+    examiner_feedback = (body.examiner_feedback or "").strip()
+
+    # Join bullet lists for the user prompt — one strength/gap per line.
+    strengths_block = "\n".join(what_did_well) if what_did_well else "(none listed)"
+    gaps_block = "\n".join(what_is_missing) if what_is_missing else "(none listed)"
+
+    user_prompt = (
+        f"Subject: {subject}\n"
+        f"Question: {question}\n"
+        f"Marks Available: {marks}\n\n"
+        f"The student's original answer had these strengths:\n{strengths_block}\n\n"
+        f"The student's original answer was missing:\n{gaps_block}\n\n"
+        f"Examiner feedback:\n{examiner_feedback}\n\n"
+        f"Original answer for reference:\n{original_answer}\n\n"
+        "Now write a complete Band 4 model answer that incorporates\n"
+        "all the improvements and fixes all the weaknesses."
+    )
+
+    try:
+        from main import groq_client  # noqa: WPS433
+    except Exception as e:
+        print(f"[Homework] groq_client import failed: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "AI service unavailable. Please try again."},
+        )
+
+    try:
+        completion = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": MODEL_ANSWER_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=MODEL_ANSWER_MAX_TOKENS,
+            temperature=MODEL_ANSWER_TEMPERATURE,
+        )
+    except Exception as e:
+        print(f"[Homework] model answer Groq failed: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "AI service unavailable. Please try again."},
+        )
+
+    try:
+        raw_text = (completion.choices[0].message.content or "").strip()
+    except (AttributeError, IndexError) as e:
+        print(f"[Homework] model answer response shape unexpected: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "AI service unavailable. Please try again."},
+        )
+
+    # ── Update the latest matching essay_checks row. ───────────
+    # Find the most recent check for this user with the same
+    # question text, then store the generated model answer.
+    try:
+        match_result = (
+            supabase.table(ESSAY_CHECKS_TABLE)
+            .select("id")
+            .eq("user_id", verified_user_id)
+            .eq("question", question)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        match_rows = getattr(match_result, "data", None) or []
+        if match_rows:
+            row_id = match_rows[0].get("id")
+            if row_id:
+                supabase.table(ESSAY_CHECKS_TABLE).update(
+                    {"model_answer": raw_text}
+                ).eq("id", row_id).execute()
+    except Exception as e:
+        print(
+            f"[Homework] essay_checks model_answer update failed: "
+            f"{type(e).__name__}: {e}"
+        )
+
+    return ModelAnswerResponse(model_answer=raw_text, error=None)
+
+
+# ============================================================
+# ESSAY HISTORY — response models + GET endpoint
+# ============================================================
+
+
+class EssayHistoryItem(BaseModel):
+    """One saved essay check row returned to the frontend."""
+
+    id: str
+    subject: str
+    question: str
+    original_answer: str
+    marks_available: int
+    grade_band: Optional[str] = None
+    band_label: Optional[str] = None
+    estimated_marks: Optional[int] = None
+    what_did_well: List[str] = Field(default_factory=list)
+    what_is_missing: List[str] = Field(default_factory=list)
+    examiner_feedback: Optional[str] = None
+    model_paragraph: Optional[str] = None
+    model_answer: Optional[str] = None
+    created_at: str
+
+
+class EssayHistoryResponse(BaseModel):
+    """Envelope for GET /homework/essay-history."""
+
+    history: List[EssayHistoryItem]
+
+
+def _coerce_jsonb_string_list(value) -> List[str]:
+    """
+    Normalise a jsonb column from Supabase into a list of strings.
+
+    PostgREST may return a Python list already, or null when empty.
+    """
+
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if item is not None]
+    return []
+
+
+@router.get(
+    "/essay-history",
+    response_model=EssayHistoryResponse,
+    summary="Get the caller's recent essay check history",
+)
+def essay_history(
+    verified_user_id: str = Depends(verify_bearer_token),
+):
+    """
+    Return the last 20 essay checks for the signed-in user.
+
+    Flow:
+      1. Verify bearer token (user_id from JWT).
+      2. SELECT from essay_checks ordered by created_at DESC.
+      3. Map each row into EssayHistoryItem for the frontend.
+    """
+
+    try:
+        list_result = (
+            supabase.table(ESSAY_CHECKS_TABLE)
+            .select(
+                "id, subject, question, original_answer, marks_available, "
+                "grade_band, band_label, estimated_marks, what_did_well, "
+                "what_is_missing, examiner_feedback, model_paragraph, "
+                "model_answer, created_at"
+            )
+            .eq("user_id", verified_user_id)
+            .order("created_at", desc=True)
+            .limit(ESSAY_HISTORY_LIMIT)
+            .execute()
+        )
+        rows = getattr(list_result, "data", None) or []
+    except Exception as e:
+        print(f"[Homework] essay history list failed: {type(e).__name__}: {e}")
+        rows = []
+
+    history: List[EssayHistoryItem] = []
+    for row in rows:
+        created = row.get("created_at")
+        history.append(
+            EssayHistoryItem(
+                id=str(row.get("id") or ""),
+                subject=str(row.get("subject") or ""),
+                question=str(row.get("question") or ""),
+                original_answer=str(row.get("original_answer") or ""),
+                marks_available=int(row.get("marks_available") or 0),
+                grade_band=row.get("grade_band"),
+                band_label=row.get("band_label"),
+                estimated_marks=row.get("estimated_marks"),
+                what_did_well=_coerce_jsonb_string_list(row.get("what_did_well")),
+                what_is_missing=_coerce_jsonb_string_list(
+                    row.get("what_is_missing")
+                ),
+                examiner_feedback=row.get("examiner_feedback"),
+                model_paragraph=row.get("model_paragraph"),
+                model_answer=row.get("model_answer"),
+                created_at=str(created) if created is not None else "",
+            )
+        )
+
+    return EssayHistoryResponse(history=history)

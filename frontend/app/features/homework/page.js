@@ -29,25 +29,17 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import {
-  BookOpen,
-  ChevronDown,
-  ChevronUp,
-  ChevronLeft,
-  ChevronRight,
-  Globe,
-  MessageSquare,
-  Scissors,
-  Zap,
-} from "lucide-react";
+import Link from "next/link";
+import { motion } from "framer-motion";
+import { MessageSquare, ChevronDown } from "lucide-react";
 import {
   SUBJECTS,
   getSubjectByName,
   getSubjectByKey,
 } from "../../../lib/subjects";
 import { supabase } from "../../../lib/supabaseClient";
-import PageHeader from "../../components/PageHeader";
 import SubjectBadge from "../../components/SubjectBadge";
+import { fadeUp } from "../../lib/animations";
 
 // Backend base URL. Pulled from the public env var defined in
 // frontend/.env.local so we never hardcode the host. Falling back to
@@ -111,12 +103,239 @@ const HISTORY_FILTER_OPTIONS = [
 // Subject-key → Tailwind border-l-* class. We keep these as literal
 // strings (NOT a template) so Tailwind's JIT keeps the CSS in the
 // final bundle. Same pattern used by the Notes and Flashcards pages.
-const HISTORY_LEFT_BORDER_CLASS = {
-  economics: "border-l-economics-text",
-  business:  "border-l-business-text",
-  english:   "border-l-english-text",
-  ict:       "border-l-ict-text",
+// Subject-key → left-border accent (CSS variables only — matches dashboard notes)
+const HISTORY_LEFT_BORDER_VAR = {
+  economics: "var(--econ-accent)",
+  business: "var(--biz-accent)",
+  english: "var(--eng-accent)",
+  ict: "var(--ict-accent)",
 };
+
+// ────────────────────────────────────────────────────────────────
+// HELPER: stripAnswerMarkdown
+// ----------------------------------------------------------------
+// Removes stray Markdown symbols from model answers so students
+// never see raw ** or ## even if the LLM slips.
+// ────────────────────────────────────────────────────────────────
+function stripAnswerMarkdown(text) {
+  return String(text ?? "")
+    .replace(/\*\*/g, "")
+    .replace(/__/g, "")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^>\s+/gm, "")
+    .replace(/`/g, "")
+    .replace(/^\*\s+/gm, "");
+}
+
+// ────────────────────────────────────────────────────────────────
+// HELPER: parseAnswerSections
+// ----------------------------------------------------------------
+// Splits a Cambridge answer string on the four canonical headers:
+// DEFINITION, CAMBRIDGE ANSWER, EXAMINER TIP, COMMON MISTAKES.
+// Returns an object with optional string values per section.
+// ────────────────────────────────────────────────────────────────
+function parseAnswerSections(text) {
+  if (!text?.trim()) return {};
+  const cleaned = stripAnswerMarkdown(text);
+  const pattern =
+    /(?:^|\n)\s*(DEFINITION|CAMBRIDGE ANSWER|EXAMINER TIP|COMMON MISTAKES)\s*\n?/gi;
+  const parts = cleaned.split(pattern);
+  const sections = {};
+  for (let i = 1; i < parts.length; i += 2) {
+    const header = String(parts[i] || "").toUpperCase().trim();
+    const body = String(parts[i + 1] || "").trim();
+    if (header === "DEFINITION") sections.definition = body;
+    else if (header === "CAMBRIDGE ANSWER") sections.cambridge = body;
+    else if (header === "EXAMINER TIP") sections.examinerTip = body;
+    else if (header === "COMMON MISTAKES") sections.commonMistakes = body;
+  }
+  if (
+    !sections.definition &&
+    !sections.cambridge &&
+    !sections.examinerTip &&
+    !sections.commonMistakes
+  ) {
+    sections.cambridge = cleaned.trim();
+  }
+  return sections;
+}
+
+// ────────────────────────────────────────────────────────────────
+// SHARED LABEL STYLE — uppercase section headings in answer cards
+// ────────────────────────────────────────────────────────────────
+const sectionLabelStyle = {
+  fontFamily: "Inter, sans-serif",
+  fontSize: "10px",
+  fontWeight: 500,
+  letterSpacing: "0.1em",
+  textTransform: "uppercase",
+  color: "var(--date-color)",
+  marginBottom: "8px",
+};
+
+// ────────────────────────────────────────────────────────────────
+// SUB-COMPONENT: AnswerSectionsDisplay
+// ----------------------------------------------------------------
+// Renders the four mockup answer blocks (definition, Cambridge body,
+// examiner tip, common mistakes). Used on the Ask tab and in History.
+// ────────────────────────────────────────────────────────────────
+function AnswerSectionsDisplay({ text }) {
+  const sections = parseAnswerSections(text);
+  if (!text?.trim()) return null;
+
+  const mistakeBlocks = sections.commonMistakes
+    ? sections.commonMistakes
+        .split(/(?=Mistake:)/i)
+        .map((b) => b.trim())
+        .filter(Boolean)
+    : [];
+
+  return (
+    <motion.div
+      style={{
+        opacity: 1,
+        transition: "opacity 300ms ease",
+      }}
+    >
+      {sections.definition && (
+        <div style={{ marginBottom: "20px" }}>
+          <p style={sectionLabelStyle}>DEFINITION</p>
+          <motion.div
+            style={{
+              background: "var(--nav-icon-bg)",
+              border: "0.5px solid var(--nav-icon-border)",
+              borderLeft: "2px solid var(--gold)",
+              borderRadius: "6px",
+              padding: "14px 16px",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "13px",
+              color: "var(--text)",
+              lineHeight: 1.7,
+            }}
+          >
+            {sections.definition}
+          </motion.div>
+        </div>
+      )}
+
+      {sections.cambridge && (
+        <motion.div style={{ marginBottom: "20px" }}>
+          <p style={sectionLabelStyle}>CAMBRIDGE ANSWER</p>
+          {sections.cambridge.split(/\n\s*\n/).map((para, idx) => (
+            <p
+              key={idx}
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "13px",
+                color: "var(--text)",
+                lineHeight: 1.8,
+                margin: idx > 0 ? "12px 0 0" : 0,
+              }}
+            >
+              {para.trim()}
+            </p>
+          ))}
+        </motion.div>
+      )}
+
+      {sections.examinerTip && (
+        <motion.div style={{ marginBottom: "20px" }}>
+          <p style={sectionLabelStyle}>EXAMINER TIP</p>
+          <motion.div
+            style={{
+              background: "var(--nav-icon-bg)",
+              border: "0.5px solid var(--nav-icon-border)",
+              borderRadius: "6px",
+              padding: "14px 16px",
+            }}
+          >
+            <p
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "13px",
+                fontWeight: 500,
+                color: "var(--gold)",
+                margin: 0,
+              }}
+            >
+              Examiner Tip:
+            </p>
+            <p
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "13px",
+                color: "var(--text-dim)",
+                lineHeight: 1.7,
+                margin: "6px 0 0",
+              }}
+            >
+              {sections.examinerTip.replace(/^Examiner Tip:\s*/i, "")}
+            </p>
+          </motion.div>
+        </motion.div>
+      )}
+
+      {mistakeBlocks.length > 0 && (
+        <motion.div>
+          <p style={sectionLabelStyle}>COMMON MISTAKES</p>
+          {mistakeBlocks.map((block, idx) => {
+            const body = block.replace(/^Mistake:\s*/i, "");
+            const colonIdx = body.indexOf(":");
+            const hasInlineSplit =
+              block.toLowerCase().startsWith("mistake:") && colonIdx > -1;
+            const mistakeText = hasInlineSplit
+              ? body.slice(0, colonIdx).trim() || body
+              : body.split("\n")[0]?.trim() || body;
+            const explanation = hasInlineSplit
+              ? body.slice(colonIdx + 1).trim()
+              : body.includes("\n")
+                ? body.split("\n").slice(1).join("\n").trim()
+                : "";
+
+            return (
+              <motion.div key={idx} style={{ marginBottom: "10px" }}>
+                <p
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    color: "var(--text)",
+                    margin: 0,
+                  }}
+                >
+                  Mistake:{" "}
+                  <span style={{ fontWeight: 400 }}>{mistakeText}</span>
+                </p>
+                {explanation && (
+                  <p
+                    style={{
+                      fontFamily: "Inter, sans-serif",
+                      fontSize: "13px",
+                      color: "var(--text-muted)",
+                      margin: "4px 0 0",
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {explanation}
+                  </p>
+                )}
+                {idx < mistakeBlocks.length - 1 && (
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      marginTop: "10px",
+                      borderBottom: "0.5px solid var(--border)",
+                    }}
+                  />
+                )}
+              </motion.div>
+            );
+          })}
+        </motion.div>
+      )}
+    </motion.div>
+  );
+}
 
 
 // ────────────────────────────────────────────────────────────────
@@ -308,11 +527,470 @@ function buildMockHistory() {
 }
 
 
+// Essay checker — marks pill options (must match backend ALLOWED_ESSAY_MARKS).
+const ESSAY_MARKS_OPTIONS = [8, 10, 12];
+
+// Prefix the model may repeat in MODEL_PARAGRAPH — shown as a muted lead-in.
+const ESSAY_MODEL_PREFIX =
+  "Here is how this paragraph could be written for full marks:";
+
+// ────────────────────────────────────────────────────────────────
+// ESSAY CHECKER — inline SVG icons (14–16px, stroke currentColor)
+// ────────────────────────────────────────────────────────────────
+function IconCheckSquare({ size = 16 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden
+    >
+      <polyline points="9 11 12 14 22 4" />
+      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+    </svg>
+  );
+}
+
+function IconAlertCircle({ size = 14 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="8" x2="12" y2="12" />
+      <line x1="12" y1="16" x2="12.01" y2="16" />
+    </svg>
+  );
+}
+
+function IconCheckmark({ size = 14 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      aria-hidden
+    >
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+/**
+ * Split the API `grade_band` string into a short title ("Band 3")
+ * and a mark-range subtitle for the results header.
+ */
+function parseEssayGradeBandDisplay(gradeBand, totalMarks) {
+  const raw = (gradeBand || "").trim();
+  const bandMatch = raw.match(/Band\s*(\d+)/i);
+  const shortBand = bandMatch ? `Band ${bandMatch[1]}` : raw.split("—")[0]?.trim() || "—";
+
+  let markRange = raw;
+  const dashParts = raw.split("—").map((s) => s.trim()).filter(Boolean);
+  if (dashParts.length > 1) {
+    markRange = dashParts.slice(1).join(" — ");
+    if (!/mark/i.test(markRange)) {
+      markRange = `${markRange} marks out of ${totalMarks}`;
+    }
+  } else if (raw) {
+    markRange = `out of ${totalMarks} marks`;
+  } else {
+    markRange = `out of ${totalMarks} marks`;
+  }
+
+  return { shortBand, markRange };
+}
+
+/**
+ * Strip the model-paragraph lead-in so the green card can show
+ * the intro line separately from the rewritten paragraph body.
+ */
+function splitEssayModelParagraph(text) {
+  const body = (text || "").trim();
+  if (body.toLowerCase().startsWith(ESSAY_MODEL_PREFIX.toLowerCase())) {
+    return {
+      intro: ESSAY_MODEL_PREFIX,
+      body: body.slice(ESSAY_MODEL_PREFIX.length).trim(),
+    };
+  }
+  return { intro: ESSAY_MODEL_PREFIX, body };
+}
+
+/**
+ * Map a stored subject label ("Economics 9708") to a subject key
+ * for SubjectBadge and left-border accent colours.
+ */
+function subjectKeyFromEssayLabel(label) {
+  const lower = (label || "").toLowerCase();
+  for (const sub of SUBJECTS) {
+    if (lower.includes(sub.code) || lower.includes(sub.key)) return sub.key;
+    if (lower.includes(sub.fullName.toLowerCase())) return sub.key;
+    if (lower.includes(sub.name.toLowerCase())) return sub.key;
+  }
+  return "economics";
+}
+
+/**
+ * Compact grade chip for history cards, e.g. "Band 3 · 5-6/8".
+ */
+function formatEssayBandChip(gradeBand, marksAvailable) {
+  const raw = (gradeBand || "").trim();
+  const bandMatch = raw.match(/Band\s*(\d+)/i);
+  const bandShort = bandMatch ? `Band ${bandMatch[1]}` : raw.split("—")[0]?.trim() || "—";
+  const dashParts = raw.split("—").map((s) => s.trim()).filter(Boolean);
+  let rangePart = "";
+  if (dashParts.length > 1) {
+    rangePart = dashParts[1]
+      .replace(/\s*out of\s*/i, "/")
+      .replace(/\s*marks?\s*/gi, "")
+      .trim();
+    if (!rangePart.includes("/")) {
+      rangePart = `${rangePart}/${marksAvailable}`;
+    }
+  } else {
+    rangePart = `?/${marksAvailable}`;
+  }
+  return `${bandShort} · ${rangePart}`;
+}
+
+// ────────────────────────────────────────────────────────────────
+// SUB-COMPONENT: EssaySubTabButton
+// ----------------------------------------------------------------
+// Smaller sub-tabs inside the Essay Checker ("Check Answer" /
+// "My History"). Gold underline when active — mirrors main tabs.
+// ────────────────────────────────────────────────────────────────
+function EssaySubTabButton({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      style={{
+        fontFamily: "Inter, sans-serif",
+        fontSize: "12px",
+        fontWeight: 500,
+        color: active ? "var(--gold)" : "var(--text-muted)",
+        borderBottom: active ? "1.5px solid var(--gold)" : "1.5px solid transparent",
+        paddingBottom: "6px",
+        background: "none",
+        borderTop: "none",
+        borderLeft: "none",
+        borderRight: "none",
+        cursor: "pointer",
+        transition: "color 200ms ease",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────
+// SUB-COMPONENT: EssayHistoryExpandedBody
+// ----------------------------------------------------------------
+// The five feedback sections shown when a history card expands.
+// Same layout as the live Essay Checker results panel.
+// ────────────────────────────────────────────────────────────────
+function EssayHistoryExpandedBody({ entry }) {
+  const marks = entry.marks_available ?? 8;
+  const modelParts = splitEssayModelParagraph(entry.model_paragraph || "");
+  const fullModelParagraphs = entry.model_answer
+    ? entry.model_answer
+        .split(/\n\s*\n/)
+        .map((p) => p.trim())
+        .filter(Boolean)
+    : [];
+
+  return (
+    <motion.div style={{ marginTop: "16px", paddingTop: "16px", borderTop: "0.5px solid var(--border-light)" }}>
+      <span style={sectionLabelStyle}>WHAT YOU DID WELL</span>
+      <ul style={{ listStyle: "none", padding: 0, margin: "0 0 16px" }}>
+        {(entry.what_did_well || []).map((point, idx) => (
+          <li
+            key={`hist-well-${idx}`}
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "10px",
+              marginBottom: "8px",
+            }}
+          >
+            <span style={{ color: "var(--biz-text)", flexShrink: 0, marginTop: "2px" }}>
+              <IconCheckmark size={14} />
+            </span>
+            <span
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "13px",
+                color: "var(--text)",
+                lineHeight: 1.5,
+              }}
+            >
+              {point}
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      <span style={sectionLabelStyle}>WHAT IS MISSING</span>
+      <ul style={{ listStyle: "none", padding: 0, margin: "0 0 16px" }}>
+        {(entry.what_is_missing || []).map((point, idx) => (
+          <li
+            key={`hist-miss-${idx}`}
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "10px",
+              marginBottom: "8px",
+            }}
+          >
+            <span style={{ color: "var(--exam-urgent)", flexShrink: 0, marginTop: "2px" }}>
+              <IconAlertCircle size={14} />
+            </span>
+            <span
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "13px",
+                color: "var(--text)",
+                lineHeight: 1.5,
+              }}
+            >
+              {point}
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      <span style={sectionLabelStyle}>EXAMINER FEEDBACK</span>
+      <div
+        style={{
+          background: "var(--accordion-gap-bg)",
+          borderLeft: "2px solid var(--gold)",
+          borderTop: "0.5px solid var(--gold-border-hover)",
+          borderRight: "0.5px solid var(--gold-border-hover)",
+          borderBottom: "0.5px solid var(--gold-border-hover)",
+          borderRadius: "6px",
+          padding: "14px 16px",
+          marginBottom: "16px",
+        }}
+      >
+        <p
+          style={{
+            fontFamily: "Inter, sans-serif",
+            fontSize: "13px",
+            color: "var(--text-dim)",
+            lineHeight: 1.8,
+            fontStyle: "italic",
+            margin: 0,
+          }}
+        >
+          {entry.examiner_feedback}
+        </p>
+      </div>
+
+      {entry.model_paragraph && (
+        <>
+          <span style={sectionLabelStyle}>MODEL PARAGRAPH</span>
+          <motion.div
+            style={{
+              background: "color-mix(in srgb, var(--biz-text) 5%, transparent)",
+              border: "0.5px solid color-mix(in srgb, var(--biz-text) 20%, transparent)",
+              borderLeft: "2px solid var(--biz-text)",
+              borderRadius: "6px",
+              padding: "14px 16px",
+              marginBottom: entry.model_answer ? "16px" : 0,
+            }}
+          >
+            <p
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "11px",
+                color: "var(--text-muted)",
+                marginBottom: "8px",
+                marginTop: 0,
+              }}
+            >
+              {modelParts.intro}
+            </p>
+            <p
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "13px",
+                color: "var(--text)",
+                lineHeight: 1.8,
+                margin: 0,
+              }}
+            >
+              {modelParts.body}
+            </p>
+          </motion.div>
+        </>
+      )}
+
+      {entry.model_answer && (
+        <>
+          <span style={sectionLabelStyle}>FULL MODEL ANSWER</span>
+          <motion.div
+            style={{
+              background: "var(--accordion-gap-bg)",
+              border: "0.5px solid var(--gold-border)",
+              borderLeft: "3px solid var(--gold)",
+              borderRadius: "8px",
+              padding: "16px",
+            }}
+          >
+            {fullModelParagraphs.map((para, idx) => (
+              <p
+                key={`hist-model-${idx}`}
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "14px",
+                  color: "var(--text)",
+                  lineHeight: 1.9,
+                  marginBottom: idx < fullModelParagraphs.length - 1 ? "14px" : 0,
+                  marginTop: 0,
+                }}
+              >
+                {para}
+              </p>
+            ))}
+          </motion.div>
+        </>
+      )}
+    </motion.div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────
+// SUB-COMPONENT: EssayHistoryCard
+// ----------------------------------------------------------------
+// One row in the Essay Checker history list. Click to expand
+// and show the saved feedback sections (one open at a time).
+// ────────────────────────────────────────────────────────────────
+function EssayHistoryCard({ entry, expanded, onToggle }) {
+  const subjectKey = subjectKeyFromEssayLabel(entry.subject);
+  const leftAccent = HISTORY_LEFT_BORDER_VAR[subjectKey] || "var(--border)";
+  const subjectMeta = getSubjectByKey(subjectKey);
+  const bandChip = formatEssayBandChip(entry.grade_band, entry.marks_available);
+
+  return (
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={() => onToggle(entry.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggle(entry.id);
+        }
+      }}
+      style={{
+        background: "var(--card)",
+        border: "0.5px solid var(--gold-border)",
+        borderRadius: "10px",
+        padding: "18px 20px",
+        marginBottom: "8px",
+        borderLeft: `3px solid ${leftAccent}`,
+        cursor: "pointer",
+        transition: "background 200ms",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "var(--card-hover)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "var(--card)";
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "12px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", flex: 1, minWidth: 0 }}>
+          <SubjectBadge
+            subject={subjectKey}
+            label={subjectMeta?.fullName ?? entry.subject}
+          />
+          <span
+            style={{
+              background: "var(--gold-dim)",
+              border: "0.5px solid var(--gold-border-hover)",
+              borderRadius: "3px",
+              padding: "2px 8px",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "10px",
+              color: "var(--gold)",
+              marginLeft: "8px",
+            }}
+          >
+            {bandChip}
+          </span>
+        </div>
+        <motion.div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+          <span
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: "11px",
+              color: "var(--text-muted)",
+            }}
+          >
+            {formatHistoryDate(entry.created_at)}
+          </span>
+          <ChevronDown
+            size={16}
+            strokeWidth={2}
+            aria-hidden
+            style={{
+              color: "var(--text-muted)",
+              transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
+              transition: "transform 200ms ease",
+            }}
+          />
+        </motion.div>
+      </div>
+
+      <p
+        style={{
+          fontFamily: "Inter, sans-serif",
+          fontSize: "13px",
+          fontWeight: 500,
+          color: "var(--text)",
+          marginTop: "8px",
+          marginBottom: 0,
+          lineHeight: 1.4,
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+        }}
+      >
+        {entry.question}
+      </p>
+
+      {expanded && <EssayHistoryExpandedBody entry={entry} />}
+    </article>
+  );
+}
+
 // ────────────────────────────────────────────────────────────────
 // SUB-COMPONENT: HwTabButton
 // ----------------------------------------------------------------
-// The two buttons that switch between "Ask a Question" and
-// "History" tabs. Sits directly under the PageHeader on a row
+// Tab buttons for Ask / History / Essay Checker. Sits directly under the PageHeader on a row
 // whose own bottom border is the 1 px input-border rule line.
 //
 //   • Active tab — gold text + 2 px gold bottom border + Inter
@@ -325,22 +1003,28 @@ function buildMockHistory() {
 // flush instead of looking like two stacked lines.
 // ────────────────────────────────────────────────────────────────
 function HwTabButton({ active, onClick, children }) {
-  const base =
-    "px-4 py-2 text-sm font-body transition-colors " +
-    "border-b-2 -mb-px focus:outline-none " +
-    "focus-visible:ring-2 focus-visible:ring-gold " +
-    "focus-visible:ring-offset-2 focus-visible:ring-offset-background";
-  const activeCls   = "text-gold border-gold font-body-medium";
-  const inactiveCls =
-    "text-text-muted border-transparent font-body-normal " +
-    "hover:text-text-primary";
-
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={base + " " + (active ? activeCls : inactiveCls)}
+      style={{
+        fontFamily: "Inter, sans-serif",
+        fontSize: "14px",
+        fontWeight: active ? 500 : 400,
+        color: active ? "var(--gold)" : "var(--text-muted)",
+        borderBottom: active ? "2px solid var(--gold)" : "2px solid transparent",
+        paddingBottom: "10px",
+        paddingLeft: "4px",
+        paddingRight: "4px",
+        marginBottom: "-1px",
+        background: "none",
+        borderTop: "none",
+        borderLeft: "none",
+        borderRight: "none",
+        cursor: "pointer",
+        transition: "color 200ms ease",
+      }}
     >
       {children}
     </button>
@@ -358,22 +1042,28 @@ function HwTabButton({ active, onClick, children }) {
 //                hover lightens to the hover token.
 // ────────────────────────────────────────────────────────────────
 function HistoryFilterChip({ active, onClick, children }) {
-  const base =
-    "inline-flex items-center px-3 py-1.5 rounded-4px text-sm " +
-    "font-body font-body-medium whitespace-nowrap transition-colors " +
-    "focus-visible:outline-none focus-visible:ring-2 " +
-    "focus-visible:ring-gold focus-visible:ring-offset-2 " +
-    "focus-visible:ring-offset-background";
-  const activeCls   = "bg-gold text-background border border-transparent";
-  const inactiveCls =
-    "bg-card text-text-muted border border-input-border hover:bg-hover";
-
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={base + " " + (active ? activeCls : inactiveCls)}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "6px 12px",
+        borderRadius: "4px",
+        fontFamily: "Inter, sans-serif",
+        fontSize: "13px",
+        fontWeight: 500,
+        whiteSpace: "nowrap",
+        cursor: "pointer",
+        transition: "background 200ms ease, color 200ms ease",
+        background: active ? "var(--gold)" : "var(--card)",
+        color: active ? "var(--bg)" : "var(--text-muted)",
+        border: active
+          ? "0.5px solid transparent"
+          : "0.5px solid var(--gold-border)",
+      }}
     >
       {children}
     </button>
@@ -390,27 +1080,59 @@ function HistoryFilterChip({ active, onClick, children }) {
 // ────────────────────────────────────────────────────────────────
 function HistorySkeleton() {
   return (
-    <div
+    <motion.div
       aria-hidden="true"
-      className={
-        "bg-card border border-input-border border-l-[3px] " +
-        "border-l-input-border rounded-4px p-4 shadow-sm"
-      }
+      style={{
+        background: "var(--card)",
+        border: "0.5px solid var(--gold-border)",
+        borderLeft: "3px solid var(--border)",
+        borderRadius: "8px",
+        padding: "16px 20px",
+        marginBottom: "8px",
+      }}
     >
-      <div className="animate-pulse space-y-3">
-        {/* Top row: badge + date */}
-        <div className="flex items-center justify-between">
-          <div className="h-4 w-20 bg-hover rounded-4px" />
-          <div className="h-3 w-32 bg-hover rounded-4px" />
+      <motion.div
+        animate={{ opacity: [0.4, 0.7, 0.4] }}
+        transition={{ duration: 1.4, repeat: Infinity }}
+        style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <motion.div
+            style={{
+              height: 16,
+              width: 80,
+              background: "var(--card-hover)",
+              borderRadius: "4px",
+            }}
+          />
+          <div
+            style={{
+              height: 12,
+              width: 120,
+              background: "var(--card-hover)",
+              borderRadius: "4px",
+            }}
+          />
         </div>
-        {/* Question line (long) */}
-        <div className="h-4 w-11/12 bg-hover rounded-4px" />
-        {/* Footer row */}
-        <div className="flex items-center justify-end">
-          <div className="h-3 w-24 bg-hover rounded-4px" />
-        </div>
-      </div>
-    </div>
+        <div
+          style={{
+            height: 16,
+            width: "90%",
+            background: "var(--card-hover)",
+            borderRadius: "4px",
+          }}
+        />
+        <motion.div
+          style={{
+            height: 12,
+            width: 96,
+            alignSelf: "flex-end",
+            background: "var(--card-hover)",
+            borderRadius: "4px",
+          }}
+        />
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -448,91 +1170,119 @@ function HistorySkeleton() {
 //     the panel clip the bottom of the answer.
 //   • `overflow-hidden` keeps the in-progress animation tidy.
 // ────────────────────────────────────────────────────────────────
-function HistoryCard({ entry, expanded, onToggle, onFollowUp, renderAnswer }) {
-  // Subject-coloured 3 px left edge. Falls back to a neutral
-  // input-border token if for any reason the entry's subject
-  // doesn't match one of the four canonical keys.
-  const leftBorderClass =
-    HISTORY_LEFT_BORDER_CLASS[entry.subject] || "border-l-input-border";
+function HistoryCard({ entry, expanded, onToggle, onFollowUp }) {
+  // Subject-coloured 3 px left edge via CSS variable
+  const leftAccent =
+    HISTORY_LEFT_BORDER_VAR[entry.subject] || "var(--border)";
 
-  // Compose the subject pill once so we don't repeat the lookup
-  // twice (collapsed badge AND expanded badge are the SAME node).
   const subjectMeta = getSubjectByKey(entry.subject);
   const subjectName = subjectMeta?.name ?? entry.subject;
 
-  // Truncate the question to 60 chars BEFORE we send it to the
-  // follow-up handler so the textarea pre-fill stays readable.
-  // The full question is still visible in the expanded card body.
   const followUpLabel = "Follow-up on: " + truncate(entry.question, 60);
+
+  const topicChipStyle = {
+    background: "var(--gold-dim)",
+    border: "0.5px solid var(--gold-border)",
+    borderRadius: "3px",
+    padding: "2px 10px",
+    fontFamily: "Inter, sans-serif",
+    fontSize: "10px",
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+    color: "var(--gold)",
+    display: "inline-block",
+  };
 
   return (
     <article
-      className={
-        "bg-card border border-input-border border-l-[3px] " +
-        leftBorderClass +
-        " rounded-4px p-4 shadow-sm " +
-        "transition duration-200 ease-in-out hover:shadow-md"
-      }
+      style={{
+        background: "var(--card)",
+        border: "0.5px solid var(--gold-border)",
+        borderRadius: "8px",
+        padding: "16px 20px",
+        marginBottom: "8px",
+        borderLeft: `3px solid ${leftAccent}`,
+      }}
     >
-      {/* ── ROW 1: subject badge + timestamp ─────────────── */}
-      <div className="flex items-center justify-between gap-3 mb-2">
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "12px",
+          marginBottom: "8px",
+        }}
+      >
         <SubjectBadge subject={entry.subject} label={subjectName} />
-        <span className="font-body text-text-muted text-xs">
+        <span
+          style={{
+            fontFamily: "Inter, sans-serif",
+            fontSize: "11px",
+            color: "var(--text-muted)",
+          }}
+        >
           {formatHistoryDate(entry.created_at)}
         </span>
       </div>
 
-      {/* ── ROW 2 (collapsed-only): topic-tag chip ────────
-            Visible whenever there's a tag. Removed completely
-            when topic_tag is null so the design stays tidy. */}
       {entry.topic_tag && (
-        <div className="flex items-center gap-2 mb-2">
-          <span className="font-body text-text-muted text-[11px]">
-            Topic:
-          </span>
-          <span
-            className={
-              "inline-block px-2 py-[2px] rounded-4px text-[11px] " +
-              "font-body uppercase tracking-wide text-text-muted " +
-              "bg-hover border border-input-border"
-            }
-          >
-            {entry.topic_tag}
-          </span>
+        <div style={{ marginBottom: "8px" }}>
+          <span style={topicChipStyle}>{entry.topic_tag}</span>
         </div>
       )}
 
-      {/* ── ROW 3: the question text, truncated to 2 lines.
-            line-clamp-2 keeps every collapsed card the same
-            visual height, regardless of question length. */}
       <p
-        className={
-          "font-body font-body-semibold text-text-primary text-sm " +
-          "leading-snug line-clamp-2"
-        }
+        style={{
+          fontFamily: "Inter, sans-serif",
+          fontSize: "14px",
+          fontWeight: 500,
+          color: "var(--text)",
+          lineHeight: 1.4,
+          margin: 0,
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+        }}
       >
         {entry.question}
       </p>
 
-      {/* ── ROW 4: "View answer" / "Hide answer" toggle ── */}
-      <div className="flex items-center justify-end mt-3">
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
         <button
           type="button"
           onClick={() => onToggle(entry.id)}
           aria-expanded={expanded}
           aria-controls={`history-body-${entry.id}`}
-          className={
-            "inline-flex items-center gap-1 text-gold text-[13px] " +
-            "font-body font-body-medium transition hover:brightness-90 " +
-            "focus:outline-none focus-visible:underline"
-          }
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            fontFamily: "Inter, sans-serif",
+            fontSize: "12px",
+            color: "var(--gold)",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: 0,
+          }}
         >
           {expanded ? "Hide answer" : "View answer"}
-          {expanded ? (
-            <ChevronUp size={14} aria-hidden="true" />
-          ) : (
-            <ChevronDown size={14} aria-hidden="true" />
-          )}
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden
+            style={{
+              transform: expanded ? "rotate(180deg)" : "none",
+              transition: "transform 200ms ease",
+            }}
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
         </button>
       </div>
 
@@ -542,83 +1292,44 @@ function HistoryCard({ entry, expanded, onToggle, onFollowUp, renderAnswer }) {
             above for why we use this technique. */}
       <div
         id={`history-body-${entry.id}`}
-        className={
-          "overflow-hidden transition-[max-height] duration-300 ease-in-out " +
-          (expanded ? "max-h-[2000px]" : "max-h-0")
-        }
+        style={{
+          overflow: "hidden",
+          transition: "max-height 300ms ease-in-out",
+          maxHeight: expanded ? "2000px" : 0,
+        }}
       >
-        {/* Thin divider rule between the collapsed summary and the
-            full answer — gives the eye a clear hand-off point. */}
         <div
           aria-hidden="true"
-          className="my-3 h-px w-full bg-input-border"
+          style={{
+            margin: "12px 0",
+            height: "0.5px",
+            width: "100%",
+            background: "var(--border)",
+          }}
         />
 
-        {/* Topic-tag row (expanded form — same data as the
-            collapsed chip, but in a slightly bigger text size so
-            it reads cleanly inside the answer area). Hidden when
-            the entry has no tag. */}
-        {entry.topic_tag && (
-          <p className="font-body text-text-muted text-[13px] mb-3">
-            <span className="font-body-medium">Topic:</span>{" "}
-            {entry.topic_tag}
-          </p>
-        )}
+        <AnswerSectionsDisplay text={entry.answer} />
 
-        {/* Section label for the model answer block. Uses the
-            same 11 px uppercase tracking-widest treatment seen
-            on the rest of the site (Notes Key Points, etc.). */}
-        <p
-          className={
-            "font-body font-body-medium uppercase tracking-widest " +
-            "text-text-muted text-[11px] mb-2"
-          }
-        >
-          Model Answer
-        </p>
-
-        {/* The structured answer — rendered through the same
-            renderStructuredText function used for fresh answers
-            in the Ask tab, so the formatting (bold gold headings,
-            inline-label bolding, paragraph spacing) is identical. */}
-        <div
-          className={
-            "text-text-primary text-sm leading-[1.8] whitespace-pre-line"
-          }
-        >
-          {renderAnswer(entry.answer)}
-        </div>
-
-        {/* ── BOTTOM ACTIONS: follow-up button + hide link ── */}
-        <div className="mt-4 flex items-center justify-between gap-3">
+        <div style={{ marginTop: "16px" }}>
           <button
             type="button"
             onClick={() => onFollowUp(entry, followUpLabel)}
-            className={
-              "inline-flex items-center gap-1.5 text-xs " +
-              "font-body font-body-semibold border border-gold " +
-              "text-gold rounded-4px px-3 py-1.5 transition " +
-              "hover:bg-card focus-visible:outline-none " +
-              "focus-visible:ring-2 focus-visible:ring-gold " +
-              "focus-visible:ring-offset-2 " +
-              "focus-visible:ring-offset-background"
-            }
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "12px",
+              fontWeight: 600,
+              border: "0.5px solid var(--gold)",
+              color: "var(--gold)",
+              background: "transparent",
+              borderRadius: "6px",
+              padding: "6px 12px",
+              cursor: "pointer",
+            }}
           >
             Ask follow-up
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onToggle(entry.id)}
-            aria-expanded={expanded}
-            className={
-              "inline-flex items-center gap-1 text-gold text-[13px] " +
-              "font-body font-body-medium transition hover:brightness-90 " +
-              "focus:outline-none focus-visible:underline"
-            }
-          >
-            Hide answer
-            <ChevronUp size={14} aria-hidden="true" />
           </button>
         </div>
       </div>
@@ -654,91 +1365,67 @@ function HistoryCard({ entry, expanded, onToggle, onFollowUp, renderAnswer }) {
 //     where the ref is owned.
 // ────────────────────────────────────────────────────────────────
 function HistoryPagination({ page, totalPages, onPageChange }) {
-  // Nothing to paginate — render nothing rather than an empty bar.
   if (totalPages <= 1) return null;
 
-  // Build the 5-page window described in the block comment above.
-  const visibleCount = Math.min(5, totalPages);
-  let windowStart = Math.max(1, page - 2);
-  let windowEnd = windowStart + visibleCount - 1;
-  if (windowEnd > totalPages) {
-    windowEnd = totalPages;
-    windowStart = Math.max(1, windowEnd - visibleCount + 1);
-  }
-
-  // Materialise the chip numbers as an array so React can map them.
-  const pageNumbers = [];
-  for (let n = windowStart; n <= windowEnd; n++) pageNumbers.push(n);
-
-  // Shared button classes for Prev / Next. We re-use them rather
-  // than re-typing the gold-outline recipe twice.
-  const navButton =
-    "inline-flex items-center gap-1 text-[13px] font-body " +
-    "font-body-medium border border-gold text-gold rounded-4px " +
-    "px-3 py-1.5 transition hover:bg-card " +
-    "disabled:opacity-40 disabled:cursor-not-allowed " +
-    "disabled:hover:bg-transparent " +
-    "focus-visible:outline-none focus-visible:ring-2 " +
-    "focus-visible:ring-gold focus-visible:ring-offset-2 " +
-    "focus-visible:ring-offset-background";
-
-  // Page-chip classes change based on whether the chip is current.
-  const chipBase =
-    "inline-flex items-center justify-center w-8 h-8 " +
-    "rounded-4px text-[13px] font-body font-body-medium transition-colors " +
-    "focus-visible:outline-none focus-visible:ring-2 " +
-    "focus-visible:ring-gold focus-visible:ring-offset-2 " +
-    "focus-visible:ring-offset-background";
-  const chipCurrent = "bg-gold text-background border border-transparent";
-  const chipOther =
-    "bg-card text-text-muted border border-input-border " +
-    "hover:bg-hover hover:text-text-primary";
+  const navBtnStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    fontFamily: "Inter, sans-serif",
+    fontSize: "13px",
+    fontWeight: 500,
+    border: "0.5px solid var(--gold)",
+    color: "var(--gold)",
+    background: "transparent",
+    borderRadius: "6px",
+    padding: "8px 14px",
+    cursor: "pointer",
+  };
 
   return (
     <nav
       aria-label="History pagination"
-      className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+      style={{
+        marginTop: "24px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "12px",
+        flexWrap: "wrap",
+      }}
     >
-      {/* Previous */}
       <button
         type="button"
         onClick={() => onPageChange(page - 1)}
         disabled={page <= 1}
-        className={navButton}
+        style={{
+          ...navBtnStyle,
+          opacity: page <= 1 ? 0.4 : 1,
+          cursor: page <= 1 ? "not-allowed" : "pointer",
+        }}
       >
-        <ChevronLeft size={14} aria-hidden="true" />
         Previous
       </button>
-
-      {/* Centre: page-number chips + textual indicator */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1.5">
-          {pageNumbers.map((n) => (
-            <button
-              key={n}
-              type="button"
-              onClick={() => onPageChange(n)}
-              aria-current={n === page ? "page" : undefined}
-              className={chipBase + " " + (n === page ? chipCurrent : chipOther)}
-            >
-              {n}
-            </button>
-          ))}
-        </div>
-        <span className="font-body text-text-muted text-[13px] whitespace-nowrap">
-          Page {page} of {totalPages}
-        </span>
-      </div>
-
-      {/* Next */}
+      <span
+        style={{
+          fontFamily: "Inter, sans-serif",
+          fontSize: "13px",
+          color: "var(--text-muted)",
+        }}
+      >
+        Page {page} of {totalPages}
+      </span>
       <button
         type="button"
         onClick={() => onPageChange(page + 1)}
         disabled={page >= totalPages}
-        className={navButton}
+        style={{
+          ...navBtnStyle,
+          opacity: page >= totalPages ? 0.4 : 1,
+          cursor: page >= totalPages ? "not-allowed" : "pointer",
+        }}
       >
         Next
-        <ChevronRight size={14} aria-hidden="true" />
       </button>
     </nav>
   );
@@ -783,8 +1470,8 @@ export default function HomeworkPage() {
   // ────────────────────────────────────────────────────────────
   // HISTORY-TAB STATE
   // ────────────────────────────────────────────────────────────
-  // `activeTab` toggles which view is on screen ("ask" or
-  //    "history"). Defaults to "ask" so existing behaviour is
+  // `activeTab` toggles which view is on screen ("ask", "history",
+  //    or "essay"). Defaults to "ask" so existing behaviour is
   //    preserved on page load.
   // `activeFilter` is the lowercase subject key currently filtering
   //    the History list, or FILTER_ALL when nothing is filtered.
@@ -815,6 +1502,41 @@ export default function HomeworkPage() {
   const [historyFetched, setHistoryFetched] = useState(false);
   const [historyUsedMock, setHistoryUsedMock] = useState(false);
 
+  // ────────────────────────────────────────────────────────────
+  // ESSAY CHECKER TAB STATE
+  // ────────────────────────────────────────────────────────────
+  // `essaySubject` — display label sent to the API (e.g. "Economics 9708").
+  // `essayQuestion` — pasted Cambridge exam question text.
+  // `essayAnswer` — student's long answer to be marked.
+  // `essayMarks` — total marks available (8, 10, or 12); drives pill UI.
+  // `essayResult` — parsed JSON from POST /homework/check-essay when set.
+  // `essayLoading` — true while the examiner API call is in flight.
+  // `essayError` — user-facing message when the check-essay call fails.
+  // `modelAnswer` — full Band 4 answer from POST /homework/model-answer.
+  // `modelAnswerLoading` — true while the model-answer API call runs.
+  // `modelAnswerCopied` — brief "Copied!" state for the copy button.
+  // ────────────────────────────────────────────────────────────
+  const [essaySubject, setEssaySubject] = useState(
+    `${SUBJECTS[0].fullName} ${SUBJECTS[0].code}`
+  );
+  const [essayQuestion, setEssayQuestion] = useState("");
+  const [essayAnswer, setEssayAnswer] = useState("");
+  const [essayMarks, setEssayMarks] = useState(8);
+  const [essayResult, setEssayResult] = useState(null);
+  const [essayLoading, setEssayLoading] = useState(false);
+  const [essayError, setEssayError] = useState(null);
+  const [modelAnswer, setModelAnswer] = useState(null);
+  const [modelAnswerLoading, setModelAnswerLoading] = useState(false);
+  const [modelAnswerCopied, setModelAnswerCopied] = useState(false);
+  // `essayView` — sub-tab inside Essay Checker: "check" (form) or "history".
+  const [essayView, setEssayView] = useState("check");
+  // `essayHistory` — rows from GET /homework/essay-history.
+  const [essayHistory, setEssayHistory] = useState([]);
+  // `essayHistoryLoading` — true while essay history is being fetched.
+  const [essayHistoryLoading, setEssayHistoryLoading] = useState(false);
+  // `expandedEssayHistoryId` — only one history card expanded at a time.
+  const [expandedEssayHistoryId, setExpandedEssayHistoryId] = useState(null);
+
   // Ref pointing at the top of the History section. Used to scroll
   // smoothly back to the top when the user changes pages — it
   // lives on the parent (not Pagination) because the parent owns
@@ -834,6 +1556,8 @@ export default function HomeworkPage() {
   // history (rare — usually only when their session has just expired).
   // ────────────────────────────────────────────────────────────
   const [currentUserId, setCurrentUserId] = useState(null);
+  // Supabase session — used by essay history fetch (access_token for Bearer auth).
+  const [session, setSession] = useState(null);
   const [saveNotice, setSaveNotice] = useState(null);
 
   // useRef mirror for the freshest user-id inside async closures.
@@ -882,20 +1606,26 @@ export default function HomeworkPage() {
           return;
         }
         setCurrentUserId(data?.user?.id ?? null);
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (!cancelled) {
+          setSession(sessionData?.session ?? null);
+        }
       } catch (err) {
         // Network failure or library throw – degrade gracefully.
         if (!cancelled) {
           console.warn("[Homework] Could not resolve current user:", err);
           setCurrentUserId(null);
+          setSession(null);
         }
       }
     })();
 
     const { data: subscription } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (_event, nextSession) => {
         // Keep our cached userId in sync with any session change
         // (sign-in, sign-out, token refresh, sign-in in another tab).
-        setCurrentUserId(session?.user?.id ?? null);
+        setCurrentUserId(nextSession?.user?.id ?? null);
+        setSession(nextSession ?? null);
       }
     );
 
@@ -1244,6 +1974,203 @@ export default function HomeworkPage() {
   };
 
   // ────────────────────────────────────────────────────────────
+  // checkEssay — POST /homework/check-essay for Cambridge marking.
+  // ────────────────────────────────────────────────────────────
+  const checkEssay = async () => {
+    if (!essayQuestion.trim() || !essayAnswer.trim()) return;
+
+    setEssayLoading(true);
+    setEssayError(null);
+    setEssayResult(null);
+    setModelAnswer(null);
+    setModelAnswerCopied(false);
+
+    try {
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess?.session?.access_token ?? null;
+
+      if (!token) {
+        throw new Error(
+          "Your session has expired. Please sign in again to check your answer."
+        );
+      }
+
+      const response = await fetch(`${API_URL}/homework/check-essay`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          subject: essaySubject,
+          question: essayQuestion.trim(),
+          answer: essayAnswer.trim(),
+          marks: essayMarks,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        const detail = errorBody?.detail;
+        const message =
+          detail && typeof detail === "object" && detail.error
+            ? detail.error
+            : typeof detail === "string"
+              ? detail
+              : `Backend returned HTTP ${response.status}.`;
+        throw new Error(message);
+      }
+
+      const data = await response.json();
+      setEssayResult(data);
+    } catch (err) {
+      setEssayError(
+        err.message ||
+          "Could not reach the AscendAI backend. Is the FastAPI server running on port 8001?"
+      );
+    } finally {
+      setEssayLoading(false);
+    }
+  };
+
+  // Parsed grade header lines for the results panel (when essayResult is set).
+  const essayGradeDisplay = essayResult
+    ? parseEssayGradeBandDisplay(essayResult.grade_band, essayMarks)
+    : null;
+  const essayModelParts = essayResult
+    ? splitEssayModelParagraph(essayResult.model_paragraph)
+    : null;
+
+  // Split full model answer on blank lines for paragraph rendering.
+  const modelAnswerParagraphs = modelAnswer
+    ? modelAnswer
+        .split(/\n\s*\n/)
+        .map((p) => p.trim())
+        .filter(Boolean)
+    : [];
+
+  // ────────────────────────────────────────────────────────────
+  // fetchEssayHistory — GET /homework/essay-history for My History.
+  // ────────────────────────────────────────────────────────────
+  const fetchEssayHistory = async () => {
+    console.log("[Essay History] starting fetch...");
+    if (!session) {
+      console.log("[Essay History] no session — aborting");
+      return;
+    }
+    setEssayHistoryLoading(true);
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/homework/essay-history`,
+        {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        }
+      );
+      console.log("[Essay History] status:", res.status);
+      const data = await res.json();
+      console.log("[Essay History] data:", data);
+      const history = data.history || [];
+      console.log("[Essay History] count:", history.length);
+      setEssayHistory(history);
+    } catch (err) {
+      console.error("[Essay History] error:", err);
+    } finally {
+      setEssayHistoryLoading(false);
+    }
+  };
+
+  // Load essay history when the user opens the My History sub-tab.
+  useEffect(() => {
+    if (essayView === "history" && session) {
+      fetchEssayHistory();
+    }
+  }, [essayView, session]);
+
+  // Expand/collapse — only one essay history card open at a time.
+  const toggleEssayHistoryCard = (id) => {
+    setExpandedEssayHistoryId((prev) => (prev === id ? null : id));
+  };
+
+  // ────────────────────────────────────────────────────────────
+  // generateModelAnswer — POST /homework/model-answer after essay check.
+  // ────────────────────────────────────────────────────────────
+  const generateModelAnswer = async () => {
+    if (!essayResult || modelAnswerLoading) return;
+
+    setModelAnswerLoading(true);
+    setModelAnswer(null);
+    setModelAnswerCopied(false);
+
+    try {
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess?.session?.access_token ?? null;
+
+      if (!token) {
+        throw new Error(
+          "Your session has expired. Please sign in again to generate a model answer."
+        );
+      }
+
+      const response = await fetch(`${API_URL}/homework/model-answer`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          subject: essaySubject,
+          question: essayQuestion.trim(),
+          marks: essayMarks,
+          original_answer: essayAnswer.trim(),
+          what_did_well: essayResult.what_did_well || [],
+          what_is_missing: essayResult.what_is_missing || [],
+          examiner_feedback: essayResult.examiner_feedback || "",
+        }),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        const detail = errorBody?.detail;
+        const message =
+          detail && typeof detail === "object" && detail.error
+            ? detail.error
+            : typeof detail === "string"
+              ? detail
+              : `Backend returned HTTP ${response.status}.`;
+        throw new Error(message);
+      }
+
+      const data = await response.json();
+      setModelAnswer(data.model_answer ?? "");
+      // Refresh history list if user has My History open (model_answer saved server-side).
+      if (essayView === "history") {
+        fetchEssayHistory();
+      }
+    } catch (err) {
+      setEssayError(
+        err.message ||
+          "Could not generate a model answer. Is the backend running on port 8001?"
+      );
+    } finally {
+      setModelAnswerLoading(false);
+    }
+  };
+
+  // Copy the full model answer to the clipboard; flash "Copied!" for 2s.
+  const copyModelAnswer = async () => {
+    if (!modelAnswer) return;
+    try {
+      await navigator.clipboard.writeText(modelAnswer);
+      setModelAnswerCopied(true);
+      setTimeout(() => setModelAnswerCopied(false), 2000);
+    } catch {
+      setEssayError("Could not copy to clipboard. Please select and copy manually.");
+    }
+  };
+
+  // ────────────────────────────────────────────────────────────
   // adjustAnswer — POST /homework/adjust to refine the current
   // model answer (Simplify / More detail / Shorten / Add examples).
   // ────────────────────────────────────────────────────────────
@@ -1494,531 +2421,1324 @@ export default function HomeworkPage() {
     setActiveTab("ask");
   };
 
-  // ============================================================
-  // STRUCTURED ANSWER RENDERER
-  // ============================================================
-  // Groq returns plain text (no Markdown) organised into named
-  // sections. We need to:
-  //   1. Strip any stray Markdown symbols defensively (so even if the
-  //      model slips in `**` the student never sees raw symbols).
-  //   2. Detect the four canonical section headings — DEFINITION,
-  //      CAMBRIDGE ANSWER, EXAMINER TIP, COMMON MISTAKES — and any
-  //      heading the BREAKDOWN section uses, then render them as bold
-  //      uppercase gold using the `text-gold` Tailwind token.
-  //   3. Detect inline labels at the start of a line (Mistake:,
-  //      Examiner Tip:, Definition:, Application:, Analysis:) and
-  //      bold the label so the student can scan the answer.
-  //   4. Treat blank lines as paragraph breaks (visible spacing
-  //      between blocks) instead of literal whitespace.
-  // ------------------------------------------------------------
-  // Implementation note: section headings live in `SECTION_HEADERS`
-  // and inline labels live in `INLINE_PREFIXES`. Both are scoped to
-  // this component so they can't drift from the backend's prompt.
-  // ============================================================
-  const renderStructuredText = (text) => {
-    if (!text) return null;
+  // Topic tag for the current answer — read from optimistic history row
+  const displayedTopicTag =
+    allQuestions.find((q) => q.id === currentQuestionId)?.topic_tag ?? null;
 
-    // Section names (UPPERCASE, exact match) the renderer treats as
-    // bold gold headings. Must mirror the section names produced by
-    // the Cambridge tutor prompt in backend/main.py.
-    const SECTION_HEADERS = new Set([
-      "DEFINITION",
-      "CAMBRIDGE ANSWER",
-      "EXAMINER TIP",
-      "COMMON MISTAKES",
-    ]);
-
-    // Inline prefixes — when a line starts with one of these, the
-    // label is rendered in semibold so the structure is scannable.
-    const INLINE_PREFIXES = [
-      "Mistake:",
-      "Examiner Tip:",
-      "Definition:",
-      "Application:",
-      "Analysis:",
-    ];
-
-    // Defensive strip of Markdown symbols that should never appear
-    // (the system prompt forbids them, but LLMs occasionally slip up).
-    const cleaned = text
-      .replace(/\*\*/g, "")
-      .replace(/__/g, "")
-      .replace(/^#{1,6}\s+/gm, "")
-      .replace(/^>\s+/gm, "")
-      .replace(/`/g, "");
-
-    // Group consecutive non-empty lines into "blocks" separated by
-    // blank lines. Each block renders as either a heading-with-body
-    // or a regular paragraph.
-    const blocks = [];
-    let current = [];
-    for (const rawLine of cleaned.split("\n")) {
-      const line = rawLine.trimEnd();
-      if (line.trim() === "") {
-        if (current.length > 0) {
-          blocks.push(current);
-          current = [];
-        }
-      } else {
-        current.push(line);
-      }
-    }
-    if (current.length > 0) blocks.push(current);
-
-    return blocks.map((block, blockIdx) => {
-      const firstLine = block[0].trim();
-      const isHeader = SECTION_HEADERS.has(firstLine.toUpperCase());
-
-      if (isHeader) {
-        // Render the heading in bold gold (with a thin gold underline)
-        // and stack the body lines below it as paragraphs.
-        const bodyLines = block.slice(1);
-        return (
-          <div key={blockIdx} className="mb-5">
-            <h3 className="text-gold font-bold text-sm uppercase tracking-widest mb-2 pb-1 border-b border-hover">
-              {firstLine}
-            </h3>
-            <div className="space-y-2">
-              {bodyLines.map((line, lineIdx) =>
-                renderInlineLine(line, INLINE_PREFIXES, `${blockIdx}-${lineIdx}`)
-              )}
-            </div>
-          </div>
-        );
-      }
-
-      // Numbered breakdown lines (e.g. "1. Definition — ...") render
-      // as their own paragraph block so the structural overview reads
-      // like a clean list.
-      return (
-        <div key={blockIdx} className="mb-3 space-y-1">
-          {block.map((line, lineIdx) =>
-            renderInlineLine(line, INLINE_PREFIXES, `${blockIdx}-${lineIdx}`)
-          )}
-        </div>
-      );
-    });
+  // Shared form label style (SUBJECT / YOUR QUESTION)
+  const formLabelStyle = {
+    fontFamily: "Inter, sans-serif",
+    fontSize: "10px",
+    fontWeight: 500,
+    letterSpacing: "0.1em",
+    textTransform: "uppercase",
+    color: "var(--date-color)",
+    marginBottom: "6px",
+    display: "block",
   };
 
-  // Render ONE line. If it starts with a recognised inline prefix
-  // (Mistake:, Examiner Tip:, etc.) the label is bolded and the rest
-  // flows as normal body text. Otherwise the line renders as a plain
-  // paragraph using the standard text-primary token.
-  const renderInlineLine = (line, prefixes, key) => {
-    for (const prefix of prefixes) {
-      if (line.startsWith(prefix)) {
-        const rest = line.slice(prefix.length).trim();
-        return (
-          <p key={key} className="text-text-primary leading-relaxed">
-            <span className="font-semibold text-text-primary">{prefix}</span>{" "}
-            {rest}
-          </p>
-        );
-      }
-    }
-    return (
-      <p key={key} className="text-text-primary leading-relaxed">
-        {line}
-      </p>
-    );
+  // Card shell used for form and answer panels
+  const panelCardStyle = {
+    background: "var(--card)",
+    border: "0.5px solid var(--gold-border)",
+    borderRadius: "10px",
+    padding: "24px",
   };
+
+  // Input / select / textarea field base
+  const fieldStyle = {
+    width: "100%",
+    background: "var(--card-hover)",
+    border: "0.5px solid var(--gold-border-hover)",
+    borderRadius: "8px",
+    fontFamily: "Inter, sans-serif",
+    fontSize: "13px",
+    color: "var(--text)",
+    outline: "none",
+  };
+
+  // Topic chip in answer header
+  const topicChipStyle = {
+    background: "var(--gold-dim)",
+    border: "0.5px solid var(--gold-border)",
+    borderRadius: "3px",
+    padding: "2px 10px",
+    fontFamily: "Inter, sans-serif",
+    fontSize: "10px",
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+    color: "var(--gold)",
+    flexShrink: 0,
+    marginLeft: "auto",
+  };
+
+  // Small loading spinner for buttons
+  const BtnSpinner = ({ color = "var(--bg)" }) => (
+    <span
+      aria-hidden="true"
+      style={{
+        display: "inline-block",
+        width: 16,
+        height: 16,
+        border: `2px solid ${color}`,
+        borderTopColor: "transparent",
+        borderRadius: "50%",
+        animation: "hw-spin 0.7s linear infinite",
+      }}
+    />
+  );
 
   return (
-    <main className="min-h-screen bg-background py-6 px-4 sm:px-8">
-      <div className="max-w-7xl mx-auto">
-        {/* Unified shared page header (replaces the old gradient
-            H1 — every feature page now uses PageHeader). */}
-        <PageHeader
-          title="Homework Assistant"
-          subtitle="Cambridge AS Level — Model answers with structural breakdown"
-        />
+    <motion.main
+      className="homework-page"
+      style={{ minHeight: "100vh", background: "var(--bg)" }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.35 }}
+    >
+      <style jsx global>{`
+        @keyframes hw-spin {
+          to {
+            transform: rotate(360deg);
+          }
+        }
+        .homework-two-col {
+          margin: 20px var(--page-padding);
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 20px;
+          align-items: start;
+        }
+        @media (max-width: 1023px) {
+          .homework-two-col {
+            grid-template-columns: 1fr;
+          }
+        }
+        .homework-field::placeholder {
+          color: var(--text-muted);
+        }
+        .homework-field:focus {
+          border-color: var(--gold) !important;
+        }
+      `}</style>
 
-        {/* ────────────────────────────────────────────────────
-            TAB NAVIGATION
-            ────────────────────────────────────────────────────
-            Two buttons in a row that switch between the existing
-            "Ask a Question" view and the new "History" view.
-            The row itself owns the 1 px input-border bottom rule
-            and the buttons use a -1px negative margin so their
-            own 2 px active border sits flush on top of that rule
-            instead of below it.
-
-            Switching tabs is a PURE state update — no fetch fires
-            and no URL changes. The History fetch only runs the
-            FIRST time the user opens that tab (see EFFECT 4). */}
-        <nav
-          aria-label="Homework tabs"
-          className="flex items-center gap-2 border-b border-input-border mb-6"
+      <div
+        style={{
+          padding: "16px var(--page-padding) 0",
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+        }}
+      >
+        <Link
+          href="/dashboard"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            fontFamily: "Inter, sans-serif",
+            fontSize: "13px",
+            color: "var(--text-muted)",
+            textDecoration: "none",
+            transition: "color 200ms",
+          }}
         >
-          <HwTabButton
-            active={activeTab === "ask"}
-            onClick={() => setActiveTab("ask")}
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden
           >
-            Ask a Question
-          </HwTabButton>
-          <HwTabButton
-            active={activeTab === "history"}
-            onClick={() => setActiveTab("history")}
-          >
-            History
-          </HwTabButton>
-        </nav>
+            <path d="M19 12H5M12 19l-7-7 7-7" />
+          </svg>
+          Dashboard
+        </Link>
+        <span style={{ color: "var(--text-muted)", fontSize: "13px" }}>/</span>
+        <span
+          style={{
+            fontFamily: "Inter, sans-serif",
+            fontSize: "13px",
+            color: "var(--text-dim)",
+          }}
+        >
+          Homework Assistant
+        </span>
+      </div>
 
-        {/* ────────────────────────────────────────────────────
-            ASK TAB — wraps the entire pre-existing layout
-            ────────────────────────────────────────────────────
-            Nothing inside this conditional was changed by the
-            History feature. It's the exact two-column form +
-            answer + breakdown + adjustment-buttons view that
-            shipped before, just gated by `activeTab === "ask"`
-            so the History view can swap in beneath the same
-            <main> container.  */}
-        {activeTab === "ask" && (
-        <div className="flex flex-col lg:flex-row gap-6">
-          {/* Left column: Form and adjustments */}
-          <div className="flex-1 space-y-6">
-            {/* Question form card */}
-            <div className="bg-white rounded-4px shadow-md border border-hover p-6">
-              <h2 className="font-heading text-xl font-semibold text-text-primary mb-4 pb-2 border-b border-hover relative after:content-[''] after:absolute after:bottom-0 after:left-0 after:w-16 after:h-0.5 after:bg-gold">
-                ✍️ Ask a question
-              </h2>
-              <div className="mb-4">
-                <label className="block font-semibold text-text-primary mb-2">
-                  Subject
-                </label>
-                <select
-                  value={selectedSubject}
-                  onChange={(e) => setSelectedSubject(e.target.value)}
-                  className="w-full border border-hover rounded-4px px-3 py-2 focus:border-gold focus:ring-1 focus:ring-gold outline-none"
-                >
-                  {/* Build options from the shared subject list. The
-                      <option> value is the subject `key` (used internally),
-                      and the visible label combines fullName + syllabus code. */}
-                  {SUBJECTS.map((sub) => (
-                    <option key={sub.key} value={sub.key}>
-                      {sub.fullName} ({sub.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="mb-4">
-                <label className="block font-semibold text-text-primary mb-2">
-                  Your question
-                </label>
-                <textarea
-                  rows={5}
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  placeholder="e.g., Explain the concept of price elasticity of demand and its determinants."
-                  className="w-full border border-hover rounded-4px px-3 py-2 focus:border-gold focus:ring-1 focus:ring-gold outline-none resize-y"
-                />
-              </div>
-              {/* Inline error banner – only renders when `error` is non-null.
-                  Sits directly above the Generate button so the user can
-                  read the message and immediately try again. */}
-              {error && (
-                <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-4px text-red-700 text-sm">
-                  {error}
-                </div>
-              )}
+      {/* PAGE HEADER */}
+      <header style={{ padding: "32px var(--page-padding) 0" }}>
+        <motion.h1
+          variants={fadeUp}
+          initial="hidden"
+          animate="visible"
+          style={{
+            fontFamily: "'Playfair Display', serif",
+            fontSize: "28px",
+            color: "var(--text)",
+            fontWeight: 700,
+            margin: 0,
+          }}
+        >
+          Homework Assistant
+        </motion.h1>
+        <motion.p
+          variants={fadeUp}
+          initial="hidden"
+          animate="visible"
+          style={{
+            fontFamily: "Inter, sans-serif",
+            fontSize: "13px",
+            color: "var(--text-muted)",
+            marginTop: "4px",
+            marginBottom: 0,
+          }}
+        >
+          Cambridge AS Level — Model answers with structural breakdown
+        </motion.p>
+      </header>
 
-              {/* Primary button — unified gold-filled style
-                  matching every other page's primary CTA
-                  (audit Task 10). text-background is the cream
-                  token used for text on gold surfaces. */}
+      {/* TABS */}
+      <nav
+        aria-label="Homework tabs"
+        style={{
+          margin: "20px var(--page-padding) 0",
+          borderBottom: "1px solid var(--border-light)",
+          display: "flex",
+          gap: "24px",
+        }}
+      >
+        <HwTabButton
+          active={activeTab === "ask"}
+          onClick={() => setActiveTab("ask")}
+        >
+          Ask a Question
+        </HwTabButton>
+        <HwTabButton
+          active={activeTab === "history"}
+          onClick={() => setActiveTab("history")}
+        >
+          History
+        </HwTabButton>
+        <HwTabButton
+          active={activeTab === "essay"}
+          onClick={() => setActiveTab("essay")}
+        >
+          Essay Checker
+        </HwTabButton>
+      </nav>
+
+      {/* ASK TAB */}
+      {activeTab === "ask" && (
+        <motion.div
+          className="homework-two-col"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
+        >
+          {/* LEFT — question form */}
+          <div>
+            <motion.div style={panelCardStyle}>
+              <label htmlFor="hw-subject" style={formLabelStyle}>
+                SUBJECT
+              </label>
+              <select
+                id="hw-subject"
+                className="homework-field"
+                value={selectedSubject}
+                onChange={(e) => setSelectedSubject(e.target.value)}
+                style={{
+                  ...fieldStyle,
+                  padding: "10px 14px",
+                  cursor: "pointer",
+                  marginBottom: "16px",
+                  appearance: "none",
+                }}
+              >
+                {SUBJECTS.map((sub) => (
+                  <option key={sub.key} value={sub.key}>
+                    {sub.fullName} {sub.code}
+                  </option>
+                ))}
+              </select>
+
+              <label htmlFor="hw-question" style={formLabelStyle}>
+                YOUR QUESTION
+              </label>
+              <textarea
+                id="hw-question"
+                className="homework-field"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                placeholder="e.g., Explain the concept of price elasticity of demand and its determinants."
+                style={{
+                  ...fieldStyle,
+                  minHeight: "120px",
+                  padding: "12px 14px",
+                  resize: "vertical",
+                  lineHeight: 1.6,
+                  marginBottom: "16px",
+                }}
+              />
+
               <button
                 type="button"
                 onClick={() => generateAnswer()}
                 disabled={isLoading}
-                className={
-                  "bg-gold text-background font-body font-body-semibold " +
-                  "text-sm px-5 py-2.5 rounded-4px inline-flex items-center " +
-                  "gap-2 transition hover:brightness-90 " +
-                  "disabled:opacity-60 disabled:cursor-not-allowed " +
-                  "focus-visible:outline-none focus-visible:ring-2 " +
-                  "focus-visible:ring-gold focus-visible:ring-offset-2 " +
-                  "focus-visible:ring-offset-background"
-                }
+                style={{
+                  width: "100%",
+                  height: "44px",
+                  background: "var(--gold)",
+                  borderRadius: "8px",
+                  border: "none",
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "14px",
+                  fontWeight: 500,
+                  color: "var(--bg)",
+                  cursor: isLoading ? "not-allowed" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px",
+                  opacity: isLoading ? 0.85 : 1,
+                }}
               >
                 {isLoading ? (
                   <>
-                    <span
-                      aria-hidden="true"
-                      className="inline-block w-4 h-4 border-2 border-background border-t-transparent rounded-full animate-spin"
-                    />
-                    Generating…
+                    <BtnSpinner />
+                    Generating...
                   </>
                 ) : (
-                  "Generate Answer"
+                  <>
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      aria-hidden
+                    >
+                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                    </svg>
+                    Generate Answer
+                  </>
                 )}
               </button>
-            </div>
 
-            {/* Need adjustments? — shown after an answer exists. */}
-            {answer && !isLoading && (
-              <div
-                className={
-                  "bg-white rounded-4px shadow-md border border-hover p-6 " +
-                  "transition-opacity duration-300 opacity-100"
-                }
-              >
-                <h2
-                  className={
-                    "font-heading text-lg font-heading-medium text-text-primary " +
-                    "mb-1 pb-2 border-b-2 border-gold inline-block"
-                  }
+              {error && (
+                <div
+                  role="alert"
+                  style={{
+                    marginTop: "12px",
+                    background:
+                      "color-mix(in srgb, var(--exam-urgent) 8%, transparent)",
+                    border:
+                      "0.5px solid color-mix(in srgb, var(--exam-urgent) 30%, transparent)",
+                    borderRadius: "6px",
+                    padding: "12px",
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: "13px",
+                    color: "var(--exam-urgent)",
+                  }}
                 >
-                  Need adjustments?
-                </h2>
-
-                <div className="flex flex-wrap gap-2 mt-4">
-                  {[
-                    { type: ADJUST_SIMPLIFY, label: "Simplify", Icon: Zap },
-                    {
-                      type: ADJUST_MORE_DETAIL,
-                      label: "More detail",
-                      Icon: BookOpen,
-                    },
-                    { type: ADJUST_SHORTEN, label: "Shorten", Icon: Scissors },
-                    {
-                      type: ADJUST_ADD_EXAMPLES,
-                      label: "Add examples",
-                      Icon: Globe,
-                    },
-                  ].map(({ type, label, Icon }) => {
-                    const isThisLoading = adjustingType === type;
-                    const disabled = adjustingType !== null;
-                    return (
-                      <button
-                        key={type}
-                        type="button"
-                        disabled={disabled}
-                        onClick={() => adjustAnswer(type)}
-                        className={
-                          "inline-flex items-center gap-2 px-4 py-2 rounded-4px " +
-                          "border border-input-border font-body text-[13px] " +
-                          "text-text-primary bg-white transition " +
-                          "hover:border-gold hover:text-gold " +
-                          "disabled:opacity-60 disabled:cursor-not-allowed " +
-                          "focus-visible:outline-none focus-visible:ring-2 " +
-                          "focus-visible:ring-gold/30"
-                        }
-                      >
-                        {isThisLoading ? (
-                          <span
-                            aria-hidden="true"
-                            className={
-                              "inline-block w-3.5 h-3.5 border-2 border-gold " +
-                              "border-t-transparent rounded-full animate-spin"
-                            }
-                          />
-                        ) : (
-                          <Icon size={14} aria-hidden="true" />
-                        )}
-                        {label}
-                      </button>
-                    );
-                  })}
+                  {error}
                 </div>
+              )}
 
-                {answerHistory.length > 0 && (
+              {answer && !isLoading && (
+                <div style={{ marginTop: "20px" }}>
+                  <h3
+                    style={{
+                      fontFamily: "'Playfair Display', serif",
+                      fontSize: "14px",
+                      color: "var(--text)",
+                      margin: "0 0 12px",
+                      fontWeight: 700,
+                    }}
+                  >
+                    Need adjustments?
+                  </h3>
+                  <motion.div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: "8px",
+                    }}
+                  >
+                    {[
+                      {
+                        type: ADJUST_SIMPLIFY,
+                        label: "Simplify",
+                        icon: (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+                            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                          </svg>
+                        ),
+                      },
+                      {
+                        type: ADJUST_MORE_DETAIL,
+                        label: "More detail",
+                        icon: (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+                            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+                          </svg>
+                        ),
+                      },
+                      {
+                        type: ADJUST_SHORTEN,
+                        label: "Shorten",
+                        icon: (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+                            <circle cx="6" cy="6" r="3" />
+                            <circle cx="6" cy="18" r="3" />
+                            <line x1="20" y1="4" x2="8.12" y2="15.88" />
+                            <line x1="14.47" y1="14.48" x2="20" y2="20" />
+                            <line x1="8.12" y1="8.12" x2="12" y2="12" />
+                          </svg>
+                        ),
+                      },
+                      {
+                        type: ADJUST_ADD_EXAMPLES,
+                        label: "Add examples",
+                        icon: (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+                            <circle cx="12" cy="12" r="10" />
+                            <line x1="2" y1="12" x2="22" y2="12" />
+                            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                          </svg>
+                        ),
+                      },
+                    ].map(({ type, label, icon }) => {
+                      const isThisLoading = adjustingType === type;
+                      const disabled = adjustingType !== null;
+                      return (
+                        <button
+                          key={type}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => adjustAnswer(type)}
+                          style={{
+                            background: "var(--card-hover)",
+                            border: "0.5px solid var(--gold-border-hover)",
+                            borderRadius: "6px",
+                            padding: "8px 12px",
+                            fontFamily: "Inter, sans-serif",
+                            fontSize: "12px",
+                            color: "var(--text-muted)",
+                            cursor: disabled ? "not-allowed" : "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            transition: "border-color 200ms, color 200ms",
+                            opacity: disabled && !isThisLoading ? 0.6 : 1,
+                          }}
+                        >
+                          {isThisLoading ? (
+                            <BtnSpinner color="var(--gold)" />
+                          ) : (
+                            icon
+                          )}
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </motion.div>
+
+                  {answerHistory.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={undoAdjustment}
+                      disabled={adjustingType !== null}
+                      style={{
+                        marginTop: "12px",
+                        fontFamily: "Inter, sans-serif",
+                        fontSize: "12px",
+                        color: "var(--text-muted)",
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        padding: 0,
+                      }}
+                    >
+                      ← Undo
+                    </button>
+                  )}
+                </div>
+              )}
+            </motion.div>
+          </div>
+
+          {/* RIGHT — answer display */}
+          <motion.div
+            style={{
+              ...panelCardStyle,
+              minHeight: "400px",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {!answer && !isLoading ? (
+              <motion.div
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  textAlign: "center",
+                }}
+              >
+                <svg
+                  width="32"
+                  height="32"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="var(--gold-icon)"
+                  strokeWidth="1.5"
+                  aria-hidden
+                >
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                </svg>
+                <p
+                  style={{
+                    fontFamily: "'Playfair Display', serif",
+                    fontSize: "16px",
+                    color: "var(--text)",
+                    margin: "12px 0 0",
+                    fontWeight: 700,
+                  }}
+                >
+                  Ask a Cambridge question
+                </p>
+                <p
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: "13px",
+                    color: "var(--text-muted)",
+                    marginTop: "8px",
+                  }}
+                >
+                  Your model answer will appear here
+                </p>
+              </motion.div>
+            ) : (
+              <motion.div
+                style={{
+                  opacity: answerFading ? 0 : 1,
+                  transition: "opacity 300ms ease",
+                }}
+              >
+                {answer && (
+                  <motion.div
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: "12px",
+                      marginBottom: "20px",
+                    }}
+                  >
+                    <p
+                      style={{
+                        fontFamily: "'Playfair Display', serif",
+                        fontSize: "15px",
+                        color: "var(--text)",
+                        fontWeight: 700,
+                        margin: 0,
+                        flex: 1,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {question}
+                    </p>
+                    {displayedTopicTag && (
+                      <span style={topicChipStyle}>{displayedTopicTag}</span>
+                    )}
+                  </motion.div>
+                )}
+
+                {isLoading && !answer ? (
+                  <motion.div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      color: "var(--text-muted)",
+                      fontFamily: "Inter, sans-serif",
+                      fontSize: "13px",
+                    }}
+                  >
+                    <BtnSpinner color="var(--gold)" />
+                    Generating answer...
+                  </motion.div>
+                ) : (
+                  <AnswerSectionsDisplay text={answer} />
+                )}
+              </motion.div>
+            )}
+          </motion.div>
+        </motion.div>
+      )}
+
+      {/* ESSAY CHECKER TAB */}
+      {activeTab === "essay" && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
+        >
+          {/* Essay Checker sub-tabs: Check Answer vs My History */}
+          <nav
+            aria-label="Essay checker views"
+            style={{
+              margin: "16px var(--page-padding) 0",
+              display: "flex",
+              gap: "20px",
+              marginBottom: "16px",
+            }}
+          >
+            <EssaySubTabButton
+              active={essayView === "check"}
+              onClick={() => {
+                setEssayView("check");
+                setExpandedEssayHistoryId(null);
+              }}
+            >
+              Check Answer
+            </EssaySubTabButton>
+            <EssaySubTabButton
+              active={essayView === "history"}
+              onClick={() => {
+                setEssayView("history");
+                fetchEssayHistory();
+              }}
+            >
+              My History
+            </EssaySubTabButton>
+          </nav>
+
+          {essayView === "check" && (
+        <motion.div
+          className="homework-two-col"
+        >
+          {/* LEFT — essay input form */}
+          <motion.div>
+            <motion.div style={panelCardStyle}>
+              <label htmlFor="essay-subject" style={formLabelStyle}>
+                SUBJECT
+              </label>
+              <select
+                id="essay-subject"
+                className="homework-field"
+                value={essaySubject}
+                onChange={(e) => setEssaySubject(e.target.value)}
+                style={{
+                  ...fieldStyle,
+                  padding: "10px 14px",
+                  cursor: "pointer",
+                  marginBottom: "16px",
+                  appearance: "none",
+                }}
+              >
+                {SUBJECTS.map((sub) => (
+                  <option
+                    key={sub.key}
+                    value={`${sub.fullName} ${sub.code}`}
+                  >
+                    {sub.fullName} {sub.code}
+                  </option>
+                ))}
+              </select>
+
+              <span style={formLabelStyle}>MARKS AVAILABLE</span>
+              <motion.div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "8px",
+                  marginBottom: "16px",
+                }}
+              >
+                {ESSAY_MARKS_OPTIONS.map((m) => {
+                  const isActive = essayMarks === m;
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setEssayMarks(m)}
+                      style={{
+                        padding: "8px 20px",
+                        borderRadius: "6px",
+                        fontFamily: "Inter, sans-serif",
+                        fontSize: "13px",
+                        fontWeight: 500,
+                        cursor: "pointer",
+                        transition: "all 150ms",
+                        background: isActive ? "var(--gold)" : "transparent",
+                        color: isActive ? "var(--bg)" : "var(--text-muted)",
+                        border: isActive
+                          ? "none"
+                          : "0.5px solid var(--gold-border-hover)",
+                      }}
+                    >
+                      {m} marks
+                    </button>
+                  );
+                })}
+              </motion.div>
+
+              <label htmlFor="essay-question" style={formLabelStyle}>
+                THE QUESTION
+              </label>
+              <textarea
+                id="essay-question"
+                className="homework-field"
+                value={essayQuestion}
+                onChange={(e) => setEssayQuestion(e.target.value)}
+                placeholder="Paste the Cambridge exam question here..."
+                style={{
+                  ...fieldStyle,
+                  minHeight: "80px",
+                  padding: "12px 14px",
+                  resize: "vertical",
+                  lineHeight: 1.6,
+                  marginBottom: "16px",
+                }}
+              />
+
+              <label htmlFor="essay-answer" style={formLabelStyle}>
+                YOUR ANSWER
+              </label>
+              <textarea
+                id="essay-answer"
+                className="homework-field"
+                value={essayAnswer}
+                onChange={(e) => setEssayAnswer(e.target.value)}
+                placeholder={
+                  "Type or paste your answer here...\nWrite as much as you would in the exam."
+                }
+                style={{
+                  ...fieldStyle,
+                  minHeight: "200px",
+                  padding: "12px 14px",
+                  resize: "vertical",
+                  lineHeight: 1.6,
+                  marginBottom: "16px",
+                }}
+              />
+
+              <button
+                type="button"
+                onClick={() => checkEssay()}
+                disabled={
+                  essayLoading ||
+                  !essayQuestion.trim() ||
+                  !essayAnswer.trim()
+                }
+                style={{
+                  width: "100%",
+                  height: "44px",
+                  background: "var(--gold)",
+                  borderRadius: "8px",
+                  border: "none",
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "14px",
+                  fontWeight: 500,
+                  color: "var(--bg)",
+                  cursor:
+                    essayLoading ||
+                    !essayQuestion.trim() ||
+                    !essayAnswer.trim()
+                      ? "not-allowed"
+                      : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px",
+                  opacity: essayLoading ? 0.85 : 1,
+                }}
+              >
+                {essayLoading ? (
+                  <>
+                    <BtnSpinner />
+                    Checking...
+                  </>
+                ) : (
+                  <>
+                    <IconCheckSquare size={16} />
+                    Check My Answer
+                  </>
+                )}
+              </button>
+
+              {essayError && (
+                <motion.div
+                  role="alert"
+                  style={{
+                    marginTop: "12px",
+                    background:
+                      "color-mix(in srgb, var(--exam-urgent) 8%, transparent)",
+                    border:
+                      "0.5px solid color-mix(in srgb, var(--exam-urgent) 30%, transparent)",
+                    borderRadius: "6px",
+                    padding: "12px",
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: "13px",
+                    color: "var(--exam-urgent)",
+                  }}
+                >
+                  {essayError}
+                </motion.div>
+              )}
+            </motion.div>
+          </motion.div>
+
+          {/* RIGHT — examiner results */}
+          <motion.div
+            style={{
+              ...panelCardStyle,
+              minHeight: "400px",
+            }}
+          >
+            {!essayResult ? (
+              <motion.div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  minHeight: "352px",
+                  textAlign: "center",
+                }}
+              >
+                <span style={{ color: "var(--gold-icon)" }}>
+                  <IconCheckSquare size={32} />
+                </span>
+                <p
+                  style={{
+                    fontFamily: "'Playfair Display', serif",
+                    fontSize: "16px",
+                    color: "var(--text)",
+                    marginTop: "12px",
+                    marginBottom: 0,
+                  }}
+                >
+                  Check your essay
+                </p>
+                <p
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: "13px",
+                    color: "var(--text-muted)",
+                    marginTop: "8px",
+                    marginBottom: 0,
+                    maxWidth: "280px",
+                  }}
+                >
+                  Paste your answer and get instant Cambridge examiner feedback
+                </p>
+              </motion.div>
+            ) : (
+              <motion.div>
+                {/* Grade band header */}
+                <motion.div
+                  style={{
+                    background: "var(--accordion-gap-bg)",
+                    border: "0.5px solid var(--gold-border)",
+                    borderRadius: "10px",
+                    padding: "20px",
+                    textAlign: "center",
+                    marginBottom: "20px",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontFamily: "'Playfair Display', serif",
+                      fontSize: "32px",
+                      color: "var(--gold)",
+                      fontWeight: 700,
+                      margin: 0,
+                    }}
+                  >
+                    {essayGradeDisplay?.shortBand}
+                  </p>
+                  <p
+                    style={{
+                      fontFamily: "Inter, sans-serif",
+                      fontSize: "16px",
+                      color: "var(--text)",
+                      marginTop: "4px",
+                      marginBottom: 0,
+                    }}
+                  >
+                    {essayGradeDisplay?.markRange}
+                  </p>
+                  <p
+                    style={{
+                      fontFamily: "Inter, sans-serif",
+                      fontSize: "13px",
+                      color: "var(--text-muted)",
+                      marginTop: "6px",
+                      marginBottom: 0,
+                    }}
+                  >
+                    {essayResult.band_label}
+                  </p>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      marginTop: "12px",
+                      background: "var(--gold-dim)",
+                      border: "0.5px solid var(--gold-border-hover)",
+                      borderRadius: "20px",
+                      padding: "4px 16px",
+                      fontFamily: "Inter, sans-serif",
+                      fontSize: "13px",
+                      fontWeight: 500,
+                      color: "var(--gold)",
+                    }}
+                  >
+                    Estimated: {essayResult.estimated_marks} / {essayMarks}{" "}
+                    marks
+                  </span>
+                </motion.div>
+
+                {/* What you did well */}
+                <span style={formLabelStyle}>WHAT YOU DID WELL</span>
+                <motion.ul
+                  style={{
+                    listStyle: "none",
+                    padding: 0,
+                    margin: "0 0 16px",
+                  }}
+                >
+                  {(essayResult.what_did_well || []).map((point, idx) => (
+                    <li
+                      key={`well-${idx}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: "10px",
+                        marginBottom: "8px",
+                      }}
+                    >
+                      <span
+                        style={{
+                          color: "var(--biz-text)",
+                          flexShrink: 0,
+                          marginTop: "2px",
+                        }}
+                      >
+                        <IconCheckmark size={14} />
+                      </span>
+                      <span
+                        style={{
+                          fontFamily: "Inter, sans-serif",
+                          fontSize: "13px",
+                          color: "var(--text)",
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        {point}
+                      </span>
+                    </li>
+                  ))}
+                </motion.ul>
+
+                {/* What is missing */}
+                <span style={formLabelStyle}>WHAT IS MISSING</span>
+                <motion.ul
+                  style={{
+                    listStyle: "none",
+                    padding: 0,
+                    margin: "0 0 16px",
+                  }}
+                >
+                  {(essayResult.what_is_missing || []).map((point, idx) => (
+                    <li
+                      key={`missing-${idx}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: "10px",
+                        marginBottom: "8px",
+                      }}
+                    >
+                      <span
+                        style={{
+                          color: "var(--exam-urgent)",
+                          flexShrink: 0,
+                          marginTop: "2px",
+                        }}
+                      >
+                        <IconAlertCircle size={14} />
+                      </span>
+                      <span
+                        style={{
+                          fontFamily: "Inter, sans-serif",
+                          fontSize: "13px",
+                          color: "var(--text)",
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        {point}
+                      </span>
+                    </li>
+                  ))}
+                </motion.ul>
+
+                {/* Examiner feedback */}
+                <span style={formLabelStyle}>EXAMINER FEEDBACK</span>
+                <motion.div
+                  style={{
+                    background: "var(--accordion-gap-bg)",
+                    borderLeft: "2px solid var(--gold)",
+                    borderTop: "0.5px solid var(--gold-border-hover)",
+                    borderRight: "0.5px solid var(--gold-border-hover)",
+                    borderBottom: "0.5px solid var(--gold-border-hover)",
+                    borderRadius: "6px",
+                    padding: "14px 16px",
+                    marginBottom: "16px",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontFamily: "Inter, sans-serif",
+                      fontSize: "13px",
+                      color: "var(--text-dim)",
+                      lineHeight: 1.8,
+                      fontStyle: "italic",
+                      margin: 0,
+                    }}
+                  >
+                    {essayResult.examiner_feedback}
+                  </p>
+                </motion.div>
+
+                {/* Model paragraph */}
+                <span style={formLabelStyle}>MODEL PARAGRAPH</span>
+                <motion.div
+                  style={{
+                    background:
+                      "color-mix(in srgb, var(--biz-text) 5%, transparent)",
+                    border:
+                      "0.5px solid color-mix(in srgb, var(--biz-text) 20%, transparent)",
+                    borderLeft: "2px solid var(--biz-text)",
+                    borderRadius: "6px",
+                    padding: "14px 16px",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontFamily: "Inter, sans-serif",
+                      fontSize: "11px",
+                      color: "var(--text-muted)",
+                      marginBottom: "8px",
+                      marginTop: 0,
+                    }}
+                  >
+                    {essayModelParts?.intro}
+                  </p>
+                  <p
+                    style={{
+                      fontFamily: "Inter, sans-serif",
+                      fontSize: "13px",
+                      color: "var(--text)",
+                      lineHeight: 1.8,
+                      margin: 0,
+                    }}
+                  >
+                    {essayModelParts?.body}
+                  </p>
+                </motion.div>
+
+                {/* Generate full model answer — only after essay check results */}
+                <div
+                  style={{
+                    marginTop: "20px",
+                    paddingTop: "16px",
+                    borderTop: "0.5px solid var(--border-light)",
+                  }}
+                >
                   <button
                     type="button"
-                    onClick={undoAdjustment}
-                    disabled={adjustingType !== null}
-                    className={
-                      "mt-4 font-body text-[13px] text-text-muted " +
-                      "hover:text-gold transition disabled:opacity-50"
-                    }
+                    onClick={() => generateModelAnswer()}
+                    disabled={modelAnswerLoading}
+                    style={{
+                      width: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "8px",
+                      background: "transparent",
+                      border: "0.5px solid var(--gold-border-active)",
+                      borderRadius: "8px",
+                      padding: "12px",
+                      fontFamily: "Inter, sans-serif",
+                      fontSize: "13px",
+                      fontWeight: 500,
+                      color: "var(--gold)",
+                      cursor: modelAnswerLoading ? "not-allowed" : "pointer",
+                      transition: "background 200ms, border-color 200ms",
+                      opacity: modelAnswerLoading ? 0.85 : 1,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (modelAnswerLoading) return;
+                      e.currentTarget.style.background = "var(--accordion-gap-bg)";
+                      e.currentTarget.style.borderColor = "var(--gold)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "transparent";
+                      e.currentTarget.style.borderColor = "var(--gold-border-active)";
+                    }}
                   >
-                    ← Undo
+                    {modelAnswerLoading ? (
+                      <>
+                        <BtnSpinner color="var(--gold)" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          aria-hidden
+                        >
+                          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                        </svg>
+                        Generate Full Model Answer
+                      </>
+                    )}
                   </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Right column: Answer and breakdown */}
-          <div className="flex-1 space-y-6">
-            {/* Answer card */}
-            <div className="bg-white rounded-4px shadow-md border border-hover p-6">
-              <div className="flex justify-between items-center mb-4 pb-2 border-b border-hover">
-                <h2 className="font-heading text-xl font-semibold text-text-primary">
-                  📝 Model Answer
-                </h2>
-                {answer && (
-                  <button
-                    onClick={copyAnswer}
-                    className="text-text-hint text-sm hover:text-gold transition"
-                  >
-                    📋 Copy
-                  </button>
-                )}
-              </div>
-              <div
-                className={
-                  "bg-background p-4 rounded-4px border-l-3 border-gold " +
-                  "text-text-primary leading-relaxed transition-opacity duration-300 " +
-                  (answerFading ? "opacity-0" : "opacity-100")
-                }
-              >
-                {isLoading && !answer ? (
-                  <div className="flex items-center gap-2 text-text-muted">
-                    <span className="inline-block w-4 h-4 border-2 border-gold border-t-transparent rounded-full animate-spin"></span>
-                    Generating answer...
-                  </div>
-                ) : answer ? (
-                  renderStructuredText(answer)
-                ) : (
-                  <em className="text-text-muted">Your answer will appear here after you submit a question.</em>
-                )}
-              </div>
-            </div>
-
-            {/* Breakdown card — only rendered when the backend
-                actually returned a structural breakdown. The new
-                /homework/ask endpoint folds the four-section
-                structure (DEFINITION / CAMBRIDGE ANSWER / EXAMINER
-                TIP / COMMON MISTAKES) directly into the answer
-                itself, so `breakdown` stays empty and this whole
-                block is skipped. If a future endpoint re-introduces
-                a dedicated breakdown payload, this card will
-                automatically appear again. */}
-            {breakdown && (
-              <div className="bg-white rounded-4px shadow-md border border-hover p-6">
-                <h2 className="font-heading text-xl font-semibold text-text-primary mb-4 pb-2 border-b border-hover relative after:content-[''] after:absolute after:bottom-0 after:left-0 after:w-16 after:h-0.5 after:bg-gold">
-                  Structural Breakdown
-                </h2>
-                <div className="space-y-3">
-                  {renderStructuredText(breakdown)}
                 </div>
-              </div>
+
+                {/* Full model answer display */}
+                {modelAnswer && (
+                  <motion.div style={{ marginTop: "20px" }}>
+                    <span
+                      style={{
+                        ...formLabelStyle,
+                        marginTop: "20px",
+                        marginBottom: "10px",
+                      }}
+                    >
+                      FULL MODEL ANSWER
+                    </span>
+                    <motion.div
+                      style={{
+                        position: "relative",
+                        background: "var(--accordion-gap-bg)",
+                        border: "0.5px solid var(--gold-border)",
+                        borderLeft: "3px solid var(--gold)",
+                        borderRadius: "8px",
+                        padding: "20px",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => copyModelAnswer()}
+                        style={{
+                          position: "absolute",
+                          top: "12px",
+                          right: "12px",
+                          background: "transparent",
+                          border: "0.5px solid var(--gold-border-hover)",
+                          borderRadius: "6px",
+                          padding: "4px 10px",
+                          fontFamily: "Inter, sans-serif",
+                          fontSize: "11px",
+                          fontWeight: 500,
+                          color: "var(--gold)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {modelAnswerCopied ? "Copied!" : "Copy Answer"}
+                      </button>
+                      {modelAnswerParagraphs.map((para, idx) => (
+                        <p
+                          key={`model-para-${idx}`}
+                          style={{
+                            fontFamily: "Inter, sans-serif",
+                            fontSize: "14px",
+                            color: "var(--text)",
+                            lineHeight: 1.9,
+                            marginBottom:
+                              idx < modelAnswerParagraphs.length - 1
+                                ? "14px"
+                                : 0,
+                            marginTop: idx === 0 ? "28px" : 0,
+                          }}
+                        >
+                          {para}
+                        </p>
+                      ))}
+                    </motion.div>
+                  </motion.div>
+                )}
+              </motion.div>
             )}
-          </div>
-        </div>
-        )}
-        {/* ▲▲▲ END OF ASK TAB ▲▲▲ */}
+          </motion.div>
+        </motion.div>
+          )}
 
+          {essayView === "history" && (
+            <motion.section
+              aria-label="Essay check history"
+              style={{ margin: "0 var(--page-padding) 20px" }}
+            >
+              {essayHistoryLoading ? (
+                <motion.div>
+                  <HistorySkeleton />
+                  <HistorySkeleton />
+                  <HistorySkeleton />
+                </motion.div>
+              ) : (
+                <motion.div>
+                  {console.log(
+                    "[Essay History] rendering:",
+                    essayHistory.length
+                  )}
+                  {essayHistory.map((entry) => (
+                    <EssayHistoryCard
+                      key={entry.id}
+                      entry={entry}
+                      expanded={expandedEssayHistoryId === entry.id}
+                      onToggle={toggleEssayHistoryCard}
+                    />
+                  ))}
+                </motion.div>
+              )}
+            </motion.section>
+          )}
+        </motion.div>
+      )}
 
-        {/* ════════════════════════════════════════════════════
-            HISTORY TAB
-            ════════════════════════════════════════════════════
-            Visible only when activeTab === "history". Renders:
-              1. Filter chip row (All + four subjects).
-              2. "Showing X questions" results count.
-              3. Either: 3 skeletons / empty state / card list
-                 + paginator, depending on loading / data.
-              4. Dev-only "mock data" notice when the mock
-                 fallback is in use.
-            All data lives in `allQuestions` — every chip click
-            and every page click is a pure in-memory operation. */}
-        {activeTab === "history" && (
-        <section
-          aria-label="Homework history"
-          // Anchor for the smooth-scroll-to-top behaviour when
-          // the user pages forward / backward inside the
-          // paginator. Owned by the parent so child components
-          // don't need to know about layout positioning.
+      {/* HISTORY TAB */}
+      {activeTab === "history" && (
+        <motion.section
           ref={historyTopRef}
+          aria-label="Homework history"
+          style={{ margin: "20px var(--page-padding)" }}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
         >
-          {/* ── Filter chip row ────────────────────────────── */}
-          <div className="-mx-1 overflow-x-auto">
-            <ul className="flex items-center gap-2 px-1 min-w-max">
-              {HISTORY_FILTER_OPTIONS.map((opt) => (
-                <li key={opt.value}>
-                  <HistoryFilterChip
-                    active={activeFilter === opt.value}
-                    onClick={() => setActiveFilter(opt.value)}
-                  >
-                    {opt.label}
-                  </HistoryFilterChip>
-                </li>
-              ))}
-            </ul>
-          </div>
+          <motion.div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "8px",
+              marginBottom: "16px",
+            }}
+          >
+            {HISTORY_FILTER_OPTIONS.map((opt) => (
+              <HistoryFilterChip
+                key={opt.value}
+                active={activeFilter === opt.value}
+                onClick={() => setActiveFilter(opt.value)}
+              >
+                {opt.label}
+              </HistoryFilterChip>
+            ))}
+          </motion.div>
 
-          {/* ── Results count line ─────────────────────────── */}
-          <p className="mt-4 mb-3 font-body text-text-muted text-[13px]">
+          <p
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: "12px",
+              color: "var(--text-muted)",
+              marginBottom: "12px",
+            }}
+          >
             Showing {filteredQuestions.length}{" "}
             {filteredQuestions.length === 1 ? "question" : "questions"}
           </p>
 
-          {/* ── BODY: loading / error / empty / list ──────── */}
           {historyLoading ? (
-            /* LOADING — 3 pulsing skeleton cards in a vertical stack. */
-            <div className="space-y-3">
+            <motion.div>
               <HistorySkeleton />
               <HistorySkeleton />
               <HistorySkeleton />
-            </div>
+            </motion.div>
           ) : historyError ? (
-            /* ERROR — surfaced when every fetch path failed.
-               Today we never hit this because the mock fallback
-               always succeeds, but it's wired up so a future
-               "no mock data" mode can use it without a refactor. */
-            <div
-              className={
-                "bg-card border border-input-border rounded-4px " +
-                "p-6 text-center font-body text-text-muted"
-              }
+            <motion.div
+              style={{
+                ...panelCardStyle,
+                textAlign: "center",
+                color: "var(--text-muted)",
+                fontFamily: "Inter, sans-serif",
+                fontSize: "13px",
+              }}
             >
               {historyError}
-            </div>
+            </motion.div>
           ) : filteredQuestions.length === 0 ? (
-            /* EMPTY — message changes based on whether the user
-               has filtered to a specific subject or not. */
-            <div
-              className={
-                "bg-card border border-input-border rounded-4px " +
-                "p-10 shadow-sm text-center max-w-xl mx-auto"
-              }
+            <motion.div
+              style={{
+                ...panelCardStyle,
+                textAlign: "center",
+                maxWidth: "480px",
+                margin: "0 auto",
+              }}
             >
-              <div className="flex justify-center mb-4">
-                <MessageSquare
-                  size={48}
-                  strokeWidth={1.5}
-                  className="text-gold"
-                  aria-hidden="true"
-                />
-              </div>
-              <h2 className="font-heading text-2xl font-heading-bold text-text-primary mb-2">
+              <MessageSquare
+                size={48}
+                strokeWidth={1.5}
+                style={{ color: "var(--gold-icon)", margin: "0 auto 16px" }}
+                aria-hidden
+              />
+              <h2
+                style={{
+                  fontFamily: "'Playfair Display', serif",
+                  fontSize: "22px",
+                  color: "var(--text)",
+                  margin: "0 0 8px",
+                }}
+              >
                 No questions yet
               </h2>
-              <p className="font-body text-text-muted text-[13px] mb-5 leading-relaxed">
+              <p
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "13px",
+                  color: "var(--text-muted)",
+                  marginBottom: "16px",
+                }}
+              >
                 {activeFilter === FILTER_ALL
                   ? "Ask your first Cambridge question in the Ask tab."
-                  : (() => {
-                      // Show a friendly subject-specific message.
-                      const meta = getSubjectByKey(activeFilter);
-                      const name = meta?.name ?? "this subject";
-                      return (
-                        `No ${name} questions yet. ` +
-                        `Switch to Ask tab to ask your first ${name} question.`
-                      );
-                    })()}
+                  : `No ${getSubjectByKey(activeFilter)?.name ?? "this subject"} questions yet.`}
               </p>
               <button
                 type="button"
                 onClick={switchToAskTab}
-                // Secondary button — outline gold (Task 10 of the
-                // UI audit). Same recipe used for "Ask follow-up".
-                className={
-                  "inline-flex items-center gap-1.5 text-sm " +
-                  "font-body font-body-semibold border border-gold " +
-                  "text-gold rounded-4px px-4 py-2 transition " +
-                  "hover:bg-card focus-visible:outline-none " +
-                  "focus-visible:ring-2 focus-visible:ring-gold " +
-                  "focus-visible:ring-offset-2 " +
-                  "focus-visible:ring-offset-background"
-                }
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  border: "0.5px solid var(--gold)",
+                  color: "var(--gold)",
+                  background: "transparent",
+                  borderRadius: "6px",
+                  padding: "8px 16px",
+                  cursor: "pointer",
+                }}
               >
                 Ask a question
               </button>
-            </div>
+            </motion.div>
           ) : (
-            /* HAPPY PATH — show the paginated card list. */
             <>
-              <div className="space-y-3">
+              <motion.div>
                 {paginatedQuestions.map((entry) => (
                   <HistoryCard
                     key={entry.id}
@@ -2026,11 +3746,9 @@ export default function HomeworkPage() {
                     expanded={expandedId === entry.id}
                     onToggle={toggleExpand}
                     onFollowUp={handleAskFollowUp}
-                    renderAnswer={renderStructuredText}
                   />
                 ))}
-              </div>
-
+              </motion.div>
               <HistoryPagination
                 page={currentPage}
                 totalPages={totalPages}
@@ -2039,89 +3757,70 @@ export default function HomeworkPage() {
             </>
           )}
 
-          {/* Dev-only notice that we're showing mock data. Hidden
-              the moment any real row arrives via the backend or
-              the direct-Supabase fallback. */}
           {historyUsedMock && !historyLoading && (
-            <p className="mt-6 text-center font-body text-text-hint text-xs">
-              Showing sample history while your real Q&amp;A library
-              loads. The Ask tab is still writing every new answer
-              into Supabase — refresh the page once you've asked a
-              question to see real data here.
+            <p
+              style={{
+                marginTop: "24px",
+                textAlign: "center",
+                fontFamily: "Inter, sans-serif",
+                fontSize: "11px",
+                color: "var(--text-extra-dim)",
+              }}
+            >
+              Showing sample history while your real Q&amp;A library loads.
             </p>
           )}
-        </section>
-        )}
-        {/* ▲▲▲ END OF HISTORY TAB ▲▲▲ */}
+        </motion.section>
+      )}
 
-        {/* ────────────────────────────────────────────────────
-            SAVE-STATUS TOAST
-            ────────────────────────────────────────────────────
-            Fixed-position card in the bottom-right. Only renders
-            when `saveNotice` is non-null. Auto-dismisses after
-            TOAST_AUTO_DISMISS_MS (see effect above). Used solely
-            for SAVE failures – successful saves are silent.
-            "tone === 'error'" uses the same red palette as the
-            inline error banner above the Generate button.
-            "tone === 'info'" uses the gold accent so it visually
-            matches the rest of the premium UI. */}
-        {saveNotice && (
-          <div
-            role="status"
-            aria-live="polite"
-            className={
-              "fixed bottom-6 right-6 z-50 max-w-sm rounded-4px shadow-md " +
-              "border p-4 pr-10 text-sm bg-white " +
-              (saveNotice.tone === "error"
-                ? "border-red-200 text-red-700"
-                : "border-gold text-text-primary")
-            }
+      {/* SAVE TOAST */}
+      {saveNotice && (
+        <motion.div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            bottom: "24px",
+            right: "24px",
+            zIndex: 50,
+            maxWidth: "360px",
+            borderRadius: "8px",
+            padding: "16px 40px 16px 16px",
+            fontFamily: "Inter, sans-serif",
+            fontSize: "13px",
+            background: "var(--card)",
+            border:
+              saveNotice.tone === "error"
+                ? "0.5px solid color-mix(in srgb, var(--exam-urgent) 30%, transparent)"
+                : "0.5px solid var(--gold-border)",
+            color:
+              saveNotice.tone === "error"
+                ? "var(--exam-urgent)"
+                : "var(--text)",
+            boxShadow: "var(--chat-panel-shadow)",
+          }}
+        >
+          <p style={{ margin: 0, lineHeight: 1.5 }}>{saveNotice.message}</p>
+          <button
+            type="button"
+            onClick={() => setSaveNotice(null)}
+            aria-label="Dismiss"
+            style={{
+              position: "absolute",
+              top: "8px",
+              right: "8px",
+              background: "none",
+              border: "none",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+              fontSize: "18px",
+              lineHeight: 1,
+            }}
           >
-            <p className="leading-relaxed">{saveNotice.message}</p>
-            <button
-              type="button"
-              onClick={() => setSaveNotice(null)}
-              aria-label="Dismiss"
-              className="absolute top-2 right-2 text-text-hint hover:text-text-primary transition leading-none text-lg"
-            >
-              ×
-            </button>
-          </div>
-        )}
-
-        {/* LEGACY localStorage history strip — only shown on the
-            ASK tab. The new History tab (above) is the canonical
-            "previous questions" surface; this strip is kept for
-            backward compatibility with users who already have
-            localStorage rows from before the History tab shipped. */}
-        {activeTab === "ask" && history.length > 0 && (
-          <div className="mt-8 bg-white rounded-4px shadow-md border border-hover overflow-hidden">
-            <div className="px-6 py-3 border-b border-hover font-semibold text-text-primary">
-              🕘 Previous questions
-            </div>
-            <div className="divide-y divide-hover">
-              {history.map((item) => {
-                // History entries may have been saved with either an
-                // old-style display name ("Economics") or the new key
-                // ("economics") — the lookup helper handles both safely.
-                const subjectMeta = getSubjectByName(item.subject);
-                const subjectLabel = subjectMeta?.name ?? item.subject;
-                return (
-                  <div
-                    key={item.id}
-                    onClick={() => loadFromHistory(item)}
-                    className="px-6 py-3 hover:bg-background cursor-pointer transition flex items-center gap-3"
-                  >
-                    <span className="text-gold text-lg">📌</span>
-                    <span className="text-text-primary truncate">{item.question}</span>
-                    <span className="text-text-hint text-xs ml-auto">{subjectLabel}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-    </main>
+            ×
+          </button>
+        </motion.div>
+      )}
+    </motion.main>
   );
 }

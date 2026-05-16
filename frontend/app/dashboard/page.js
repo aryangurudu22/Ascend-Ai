@@ -301,6 +301,73 @@ function examDaysColor(days) {
   return "var(--text-lighter)";
 }
 
+// localStorage key — stores YYYY-MM-DD when user dismisses critical alert
+const DISMISSED_ALERTS_KEY = "ascendai-dismissed-alerts";
+
+/** Urgency colour for days chip, bar fill, and % text (CSS variables only) */
+function examUrgencyColor(urgencyLevel) {
+  if (urgencyLevel === "critical") return "var(--exam-urgent)";
+  if (urgencyLevel === "warning") return "var(--gold)";
+  if (urgencyLevel === "good") return "var(--biz-text)";
+  return "var(--text-muted)";
+}
+
+/** Smart message row colour — soft tints via color-mix on design tokens */
+function examUrgencyMessageColor(urgencyLevel) {
+  if (urgencyLevel === "critical") return "var(--exam-urgent)";
+  if (urgencyLevel === "warning") {
+    return "color-mix(in srgb, var(--gold) 80%, transparent)";
+  }
+  if (urgencyLevel === "good") {
+    return "color-mix(in srgb, var(--biz-text) 80%, transparent)";
+  }
+  return "var(--text-muted)";
+}
+
+/** True when the critical banner was dismissed for today's calendar date */
+function isCriticalBannerDismissedToday() {
+  try {
+    const stored = localStorage.getItem(DISMISSED_ALERTS_KEY);
+    return stored === toDateKey(new Date());
+  } catch {
+    return false;
+  }
+}
+
+/** Banner dismiss logic — save today so the alert returns tomorrow */
+function dismissCriticalBannerForToday() {
+  try {
+    localStorage.setItem(DISMISSED_ALERTS_KEY, toDateKey(new Date()));
+  } catch {
+    /* storage unavailable — banner may reappear on refresh */
+  }
+}
+
+/** Resolve a subject key to a display name for the alert banner */
+function subjectLabelFromKey(subjectKey) {
+  const match = SUBJECTS.find((s) => s.key === subjectKey);
+  return match?.name || subjectKey;
+}
+
+/** GET /analytics/exam-intelligence — returns [] on failure for fallback UI */
+async function fetchExamIntelligence(token) {
+  try {
+    const res = await fetch(`${API_URL}/analytics/exam-intelligence`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.warn("[Dashboard] exam-intelligence HTTP", res.status);
+      return [];
+    }
+    return Array.isArray(data?.subjects) ? data.subjects : [];
+  } catch (err) {
+    console.warn("[Dashboard] exam-intelligence fetch failed:", err);
+    return [];
+  }
+}
+
 /** Time-of-day word for the greeting (5amâ€“12 / 12â€“5 / 5â€“10 / 10â€“5) */
 function getTimeOfDay() {
   const h = new Date().getHours();
@@ -385,10 +452,7 @@ function stripMarkdown(text) {
 // HELPER: fetchDashboardData
 // Uses the same endpoints as feature pages (no new backend routes)
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-async function fetchDashboardData(userId, token) {
-  const weekStart = getMondayKey(new Date());
-  const weekEnd = getSundayKey(weekStart);
-
+async function fetchDashboardData(userId, token, weekStart, weekEnd) {
   const entriesUrl =
     `${API_URL}/timetable/entries` +
     `?user_id=${encodeURIComponent(userId)}` +
@@ -406,7 +470,12 @@ async function fetchDashboardData(userId, token) {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then(async (r) => (r.ok ? r.json().catch(() => null) : null))
+      .then(async (res) => {
+        const data = res.ok ? await res.json().catch(() => null) : null;
+        console.log("[Dashboard Timetable] response status:", res.status);
+        console.log("[Dashboard Timetable] entries:", data);
+        return data;
+      })
       .catch(() => null),
     fetch(`${API_URL}/notes/list?${notesParams.toString()}`, {
       method: "GET",
@@ -465,6 +534,17 @@ async function fetchDashboardData(userId, token) {
 export default function DashboardPage() {
   const router = useRouter();
 
+  const getWeekDates = () => {
+    const today = new Date();
+    const day = today.getDay();
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    const fmt = (d) => d.toISOString().split("T")[0];
+    return { weekStart: fmt(monday), weekEnd: fmt(sunday) };
+  };
+
   // loading â€” true until auth, onboarding, and dashboard data are ready
   const [loading, setLoading] = useState(true);
 
@@ -476,6 +556,12 @@ export default function DashboardPage() {
 
   // examDates â€” subject key â†’ ISO date from onboarding localStorage
   const [examDates, setExamDates] = useState(FALLBACK_EXAM_DATES);
+
+  // examIntelligence — smart rows from GET /analytics/exam-intelligence
+  const [examIntelligence, setExamIntelligence] = useState([]);
+
+  // showCriticalBanner — dismissible critical exam alert
+  const [showCriticalBanner, setShowCriticalBanner] = useState(false);
 
   // weekEntries â€” timetable rows for current week from GET /timetable/entries
   const [weekEntries, setWeekEntries] = useState([]);
@@ -563,21 +649,37 @@ export default function DashboardPage() {
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token ?? null;
 
+      // Exam intelligence — enhances countdown; empty array keeps simple fallback
+      if (token) {
+        const intelRows = await fetchExamIntelligence(token);
+        setExamIntelligence(intelRows);
+        if (intelRows.length > 0) {
+          setExamDates((prev) => {
+            const merged = { ...prev };
+            for (const row of intelRows) {
+              if (row.exam_date) merged[row.subject] = row.exam_date;
+            }
+            return merged;
+          });
+        }
+      }
+
       if (token && authUser.id) {
+        const { weekStart, weekEnd } = getWeekDates();
         const {
           entries,
           notes,
           homeworkRows: hw,
-          weekStart,
-          weekEnd,
-        } = await fetchDashboardData(authUser.id, token);
+          weekStart: fetchedWeekStart,
+          weekEnd: fetchedWeekEnd,
+        } = await fetchDashboardData(authUser.id, token, weekStart, weekEnd);
 
         setWeekEntries(entries);
         console.log("[Dashboard] Notes fetched:", notes);
         console.log("[Dashboard] Notes count:", notes?.length);
         setLatestNotes(notes);
         setHomeworkRows(hw);
-        setWeekBounds({ start: weekStart, end: weekEnd });
+        setWeekBounds({ start: fetchedWeekStart, end: fetchedWeekEnd });
 
         const initialChecked = {};
         for (const e of entries) {
@@ -592,7 +694,19 @@ export default function DashboardPage() {
     init();
   }, [router]);
 
-  // â”€â”€ Handler: toggle session checkbox + PATCH completion â”€â”€â”€â”€â”€
+  // ── Effect: critical banner visibility (dismiss resets next calendar day) ──
+  useEffect(() => {
+    const hasCritical = examIntelligence.some(
+      (row) => row.urgency_level === "critical",
+    );
+    if (!hasCritical) {
+      setShowCriticalBanner(false);
+      return;
+    }
+    setShowCriticalBanner(!isCriticalBannerDismissedToday());
+  }, [examIntelligence]);
+
+  // ── Handler: toggle session checkbox + PATCH completion ─────
   const toggleSession = async (session) => {
     const next = !checkedSessions[session.id];
     setCheckedSessions((prev) => ({ ...prev, [session.id]: next }));
@@ -668,6 +782,14 @@ export default function DashboardPage() {
     return created >= start && created <= end;
   }).length;
 
+  // Use enhanced countdown when API returned at least one subject row
+  const useExamIntelligence = examIntelligence.length > 0;
+
+  // Most urgent critical subject for the top-of-page alert banner
+  const topCriticalSubject = examIntelligence
+    .filter((row) => row.urgency_level === "critical")
+    .sort((a, b) => a.days_remaining - b.days_remaining)[0];
+
   // Hero section outer padding (40px top on desktop, 24px on mobile via CSS)
   const heroWrapStyle = {
     padding: "40px var(--page-padding) 16px",
@@ -723,17 +845,47 @@ export default function DashboardPage() {
     gap: "16px",
   };
 
-  // Two-column grid (sessions + sidebar)
+  // Two-column grid — main stack (sessions + notes) | exam sidebar
   const twoColStyle = {
     display: "grid",
     gridTemplateColumns: "1fr 320px",
     gap: "16px",
-    alignItems: "start",
+    alignItems: "stretch",
+  };
+
+  // Left column stacks schedule, optional syllabus glance, then notes
+  const leftColStyle = {
+    display: "flex",
+    flexDirection: "column",
+    gap: "16px",
+    minWidth: 0,
   };
 
   // Subtle inner highlight on cards for depth
   const cardDepthStyle = {
     boxShadow: "var(--card-inset-shadow)",
+  };
+
+  // Notes panel fills leftover height so no dead gap beside the sidebar
+  const notesPanelStyle = {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    background: "var(--card)",
+    border: "0.5px solid var(--gold-dim)",
+    borderRadius: "10px",
+    padding: "20px 22px 22px",
+    minHeight: 0,
+    ...cardDepthStyle,
+  };
+
+  // Compact syllabus snapshot between sessions and notes
+  const syllabusGlanceStyle = {
+    background: "var(--card)",
+    border: "0.5px solid var(--gold-dim)",
+    borderRadius: "10px",
+    padding: "16px 20px",
+    ...cardDepthStyle,
   };
 
   // Full-width This Week stats bar (between accordion and two-column grid)
@@ -771,15 +923,14 @@ export default function DashboardPage() {
     color: "var(--text)",
   };
 
-  // Today's sessions card shell â€” content-sized, no stretch in grid
+  // Today's sessions card — sits at top of the left column stack
   const sessionsCardStyle = {
     background: "var(--card)",
     border: "0.5px solid var(--gold-dim)",
     borderRadius: "10px",
     padding: "22px 24px",
-    paddingBottom: 0,
     transition: "background 300ms, border-color 300ms",
-    alignSelf: "start",
+    flexShrink: 0,
     ...cardDepthStyle,
   };
 
@@ -794,7 +945,32 @@ export default function DashboardPage() {
       {/* Scoped CSS: accordion hover trick + responsive breakpoints */}
       <style jsx global>{`
         .dashboard-two-col {
-          align-items: start;
+          align-items: stretch;
+        }
+        .dashboard-left-col {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          min-width: 0;
+        }
+        .dashboard-notes-panel {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          min-height: 0;
+        }
+        .dashboard-notes-panel .dashboard-notes-grid {
+          grid-template-columns: repeat(3, 1fr);
+        }
+        @media (max-width: 1023px) {
+          .dashboard-notes-panel .dashboard-notes-grid {
+            grid-template-columns: repeat(2, 1fr);
+          }
+        }
+        @media (max-width: 767px) {
+          .dashboard-notes-panel .dashboard-notes-grid {
+            grid-template-columns: 1fr;
+          }
         }
         @media (max-width: 767px) {
           .dashboard-page {
@@ -891,7 +1067,71 @@ export default function DashboardPage() {
         }
       `}</style>
 
-      {/* â•â•â• SECTION 1 â€” HERO GREETING â•â•â• */}
+      {/* Critical exam alert — only when urgency is critical and not dismissed today */}
+      {showCriticalBanner && topCriticalSubject && (
+        <div
+          style={{
+            background:
+              "color-mix(in srgb, var(--exam-urgent) 8%, transparent)",
+            border:
+              "0.5px solid color-mix(in srgb, var(--exam-urgent) 30%, transparent)",
+            borderLeft: "3px solid var(--exam-urgent)",
+            borderRadius: "8px",
+            padding: "12px 16px",
+            margin: "12px var(--page-padding) 0",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+          }}
+          role="alert"
+        >
+          <span
+            style={{
+              fontSize: "16px",
+              color: "var(--exam-urgent)",
+              flexShrink: 0,
+            }}
+            aria-hidden
+          >
+            ⚠
+          </span>
+          <p
+            style={{
+              flex: 1,
+              fontFamily: "Inter, sans-serif",
+              fontSize: "13px",
+              fontWeight: 500,
+              color: "var(--exam-urgent)",
+              margin: 0,
+            }}
+          >
+            {subjectLabelFromKey(topCriticalSubject.subject)} exam in{" "}
+            {topCriticalSubject.days_remaining} days — only{" "}
+            {Math.round(topCriticalSubject.coverage_percentage)}% covered
+          </p>
+          <button
+            type="button"
+            aria-label="Dismiss exam alert"
+            onClick={() => {
+              dismissCriticalBannerForToday();
+              setShowCriticalBanner(false);
+            }}
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: "14px",
+              color: "var(--text-muted)",
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              padding: "0 4px",
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* SECTION 1 — HERO GREETING */}
       <header className="dashboard-hero" style={heroWrapStyle}>
         <p style={heroDateStyle}>{formatHeroDateUpper()}</p>
 
@@ -1070,9 +1310,45 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          gap: 20,
+          flexWrap: "wrap",
+          marginTop: 8,
+          marginBottom: 4,
+        }}
+      >
+        <Link
+          href="/analytics"
+          style={{
+            fontFamily: "Inter, sans-serif",
+            fontSize: 12,
+            color: "var(--gold)",
+            textDecoration: "none",
+            cursor: "pointer",
+          }}
+        >
+          View detailed analytics →
+        </Link>
+        <Link
+          href="/syllabus"
+          style={{
+            fontFamily: "Inter, sans-serif",
+            fontSize: 12,
+            color: "var(--gold)",
+            textDecoration: "none",
+            cursor: "pointer",
+          }}
+        >
+          View Syllabus →
+        </Link>
+      </div>
+
       <div style={mainContentStyle}>
         <div className="dashboard-two-col" style={twoColStyle}>
-        {/* LEFT â€” Today's study sessions */}
+        <div className="dashboard-left-col" style={leftColStyle}>
         <section style={sessionsCardStyle}>
           <motion.div
             style={{ height: "auto", alignSelf: "start" }}
@@ -1205,21 +1481,125 @@ export default function DashboardPage() {
           </motion.div>
         </section>
 
-        {/* RIGHT â€” Exam countdown */}
-        <aside style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        {useExamIntelligence && (
+          <div style={syllabusGlanceStyle}>
+            <motion.div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "baseline",
+                marginBottom: "12px",
+              }}
+            >
+              <h3
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "11px",
+                  fontWeight: 500,
+                  letterSpacing: "0.1em",
+                  color: "var(--date-color)",
+                  textTransform: "uppercase",
+                  margin: 0,
+                }}
+              >
+                Syllabus coverage
+              </h3>
+              <Link
+                href="/syllabus"
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "11px",
+                  color: "var(--gold)",
+                  textDecoration: "none",
+                }}
+              >
+                Open tracker →
+              </Link>
+            </motion.div>
+            <motion.div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "10px",
+              }}
+            >
+              {examIntelligence.map((row) => {
+                const urgencyColor = examUrgencyColor(
+                  row.urgency_level || "normal",
+                );
+                const pct = Math.min(
+                  100,
+                  Math.max(0, Number(row.coverage_percentage) || 0),
+                );
+                return (
+                  <motion.div
+                    key={row.subject}
+                    style={{
+                      padding: "10px 12px",
+                      background: "var(--accordion-gap-bg)",
+                      border: "0.5px solid var(--gold-border)",
+                      borderRadius: "8px",
+                    }}
+                  >
+                    <motion.div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: "6px",
+                      }}
+                    >
+                      <SubjectBadge subject={row.subject} />
+                      <span
+                        style={{
+                          fontFamily: "Inter, sans-serif",
+                          fontSize: "11px",
+                          fontWeight: 600,
+                          color: urgencyColor,
+                        }}
+                      >
+                        {pct}%
+                      </span>
+                    </motion.div>
+                    <motion.div
+                      style={{
+                        height: "3px",
+                        background: "var(--border)",
+                        borderRadius: "2px",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <motion.div
+                        style={{
+                          height: "100%",
+                          width: `${pct}%`,
+                          background: urgencyColor,
+                          borderRadius: "2px",
+                        }}
+                      />
+                    </motion.div>
+                  </motion.div>
+                );
+              })}
+            </motion.div>
+          </div>
+        )}
+
+        <div
+          ref={notesSectionRef}
+          className="dashboard-notes-panel"
+          style={notesPanelStyle}
+        >
           <motion.div
             style={{
-              background: "var(--card)",
-              border: "0.5px solid var(--gold-dim)",
-              borderRadius: "10px",
-              padding: "18px 20px",
-              ...cardDepthStyle,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+              marginBottom: "12px",
+              flexShrink: 0,
             }}
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.15 }}
           >
-            <h3
+            <h2
               style={{
                 fontFamily: "Inter, sans-serif",
                 fontSize: "11px",
@@ -1227,225 +1607,368 @@ export default function DashboardPage() {
                 letterSpacing: "0.12em",
                 color: "var(--date-color)",
                 textTransform: "uppercase",
+                margin: 0,
+              }}
+            >
+              Latest Notes
+            </h2>
+            <button
+              type="button"
+              onClick={() => router.push("/features/notes")}
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "11px",
+                color: "var(--gold)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: 0,
+              }}
+            >
+              View all &rarr;
+            </button>
+          </motion.div>
+
+          <motion.div
+            className="dashboard-notes-grid"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, 1fr)",
+              gap: "10px",
+              flex: 1,
+              alignContent: "start",
+            }}
+            variants={staggerContainer}
+            initial="hidden"
+            animate="visible"
+          >
+                      {displayNotes.map((note, index) => {
+                        if (!displayNotes || displayNotes.length === 0) {
+                          return null;
+                        }
+                        console.log("[Notes Render] rendering note:", note.title);
+                        const subject =
+                          note.subject?.toLowerCase() ||
+                          resolveSubjectKey(note.subject_name, note.subject_code) ||
+                          "economics";
+                        const accentColor =
+                          subject === "economics"
+                            ? "var(--econ-accent)"
+                            : subject === "business"
+                              ? "var(--biz-accent)"
+                              : subject === "english"
+                                ? "var(--eng-accent)"
+                                : "var(--ict-accent)";
+
+                        return (
+                          <motion.div
+                            key={note.id}
+                            variants={staggerItem}
+                            role="button"
+                            tabIndex={0}
+                            style={{
+                              background: "var(--card)",
+                              border: "0.5px solid var(--gold-dim)",
+                              borderRadius: "10px",
+                              padding: "18px 20px",
+                              cursor: "pointer",
+                              borderLeft: `3px solid ${accentColor}`,
+                              transition: "background 200ms, border-color 200ms",
+                              ...cardDepthStyle,
+                            }}
+                            whileHover={{
+                              backgroundColor: "var(--card-hover)",
+                              transition: { duration: 0.15 },
+                            }}
+                            onClick={() => router.push("/features/notes")}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                router.push("/features/notes");
+                              }
+                            }}
+                          >
+                            <div style={{ paddingLeft: "6px" }}>
+                              <SubjectBadge subject={subject} />
+                              <h3
+                                style={{
+                                  fontFamily:
+                                    "var(--font-playfair), 'Playfair Display', serif",
+                                  fontSize: "15px",
+                                  color: "var(--text)",
+                                  margin: "8px 0 6px",
+                                  fontWeight: 700,
+                                  lineHeight: 1.3,
+                                }}
+                              >
+                                {note.title}
+                              </h3>
+                              <p
+                                style={{
+                                  fontFamily: "Inter, sans-serif",
+                                  fontSize: "12px",
+                                  color: "var(--text-dim)",
+                                  lineHeight: 1.5,
+                                  display: "-webkit-box",
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: "vertical",
+                                  overflow: "hidden",
+                                }}
+                              >
+                                {note.summary || note.preview
+                                  ? stripMarkdown(note.summary || note.preview)
+                                  : "No preview available."}
+                              </p>
+                              <span
+                                style={{
+                                  fontFamily: "Inter, sans-serif",
+                                  fontSize: "10px",
+                                  color: "var(--text-extra-dim)",
+                                  marginTop: "10px",
+                                  display: "block",
+                                }}
+                              >
+                                {note.created_at
+                                  ? new Date(note.created_at).toLocaleDateString("en-GB", {
+                                      day: "numeric",
+                                      month: "short",
+                                      year: "numeric",
+                                    })
+                                  : ""}
+                              </span>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+
+                      {isShowingPlaceholders && (
+                        <p
+                          style={{
+                            gridColumn: "1 / -1",
+                            fontFamily: "Inter, sans-serif",
+                            fontSize: "11px",
+                            color: "var(--text-muted)",
+                            fontStyle: "italic",
+                            textAlign: "center",
+                            marginTop: "8px",
+                          }}
+                        >
+                          Sample notes &mdash; sync Classroom to see yours
+                        </p>
+                      )}
+          </motion.div>
+        </div>
+        </div>
+
+        <aside
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "12px",
+            alignSelf: "stretch",
+          }}
+        >
+          <motion.div
+            style={{
+              background: "var(--card)",
+              border: "0.5px solid var(--gold-dim)",
+              borderRadius: "10px",
+              padding: "18px 20px",
+              flex: 1,
+              ...cardDepthStyle,
+            }}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.15 }}
+          >
+                        <h3
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "11px",
+                fontWeight: 500,
+                letterSpacing: "0.1em",
+                color: "var(--date-color)",
+                textTransform: "uppercase",
                 marginBottom: "14px",
               }}
             >
               Exam Countdown
             </h3>
-            {SUBJECTS.map((subject, idx) => {
-              const iso = examDates[subject.key];
-              const days = daysUntil(iso);
-              const isLast = idx === SUBJECTS.length - 1;
-              const urgent = days != null && days < 30;
-              return (
-                <motion.div
-                  key={subject.key}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "8px 0",
-                    borderBottom: isLast ? "none" : "0.5px solid var(--border-row)",
-                  }}
-                >
-                  <SubjectBadge subject={subject.key} showCode />
-                  <div style={{ textAlign: "right" }}>
+            {useExamIntelligence
+              ? examIntelligence.map((row, idx) => {
+                  const isLast = idx === examIntelligence.length - 1;
+                  const urgency = row.urgency_level || "normal";
+                  const urgencyColor = examUrgencyColor(urgency);
+                  const pct = Math.min(
+                    100,
+                    Math.max(0, Number(row.coverage_percentage) || 0),
+                  );
+                  const showUrgencyIcon =
+                    urgency === "critical" || urgency === "warning";
+                  return (
                     <div
+                      key={row.subject}
                       style={{
-                        fontFamily: "Inter, sans-serif",
-                        fontSize: "12px",
-                        color: "var(--text)",
+                        padding: "10px 0",
+                        borderBottom: isLast
+                          ? "none"
+                          : "0.5px solid var(--border)",
                       }}
                     >
-                      {formatExamShort(iso)}
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "6px",
+                          }}
+                        >
+                          {showUrgencyIcon && (
+                            <span
+                              style={{
+                                fontSize: "12px",
+                                color: urgencyColor,
+                                flexShrink: 0,
+                              }}
+                              aria-hidden
+                            >
+                              {urgency === "critical" ? "⚠" : "●"}
+                            </span>
+                          )}
+                          <SubjectBadge subject={row.subject} showCode />
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <span
+                            style={{
+                              fontFamily: "Inter, sans-serif",
+                              fontSize: "14px",
+                              fontWeight: 600,
+                              color: urgencyColor,
+                            }}
+                          >
+                            {row.days_remaining}
+                          </span>
+                          <span
+                            style={{
+                              fontFamily: "Inter, sans-serif",
+                              fontSize: "10px",
+                              color: urgencyColor,
+                              marginLeft: "3px",
+                            }}
+                          >
+                            days
+                          </span>
+                        </div>
+                      </div>
+                      <div
+                        style={{
+                          marginTop: "6px",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
+                        }}
+                      >
+                        <div
+                          style={{
+                            flex: 1,
+                            height: "4px",
+                            background: "var(--border)",
+                            borderRadius: "2px",
+                            overflow: "hidden",
+                          }}
+                        >
+                          <div
+                            style={{
+                              height: "100%",
+                              width: `${pct}%`,
+                              background: urgencyColor,
+                              borderRadius: "2px",
+                              transition: "width 600ms ease",
+                            }}
+                          />
+                        </div>
+                        <span
+                          style={{
+                            fontFamily: "Inter, sans-serif",
+                            fontSize: "10px",
+                            color: urgencyColor,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {pct}% covered
+                        </span>
+                      </div>
+                      <p
+                        style={{
+                          marginTop: "4px",
+                          marginBottom: 0,
+                          fontFamily: "Inter, sans-serif",
+                          fontSize: "11px",
+                          lineHeight: 1.4,
+                          color: examUrgencyMessageColor(urgency),
+                        }}
+                      >
+                        {row.smart_message}
+                      </p>
                     </div>
-                    <motion.div
+                  );
+                })
+              : SUBJECTS.map((subject, idx) => {
+                  const iso = examDates[subject.key];
+                  const days = daysUntil(iso);
+                  const isLast = idx === SUBJECTS.length - 1;
+                  const urgent = days != null && days < 30;
+                  return (
+                    <div
+                      key={subject.key}
                       style={{
-                        fontFamily: "Inter, sans-serif",
-                        fontSize: "11px",
-                        fontWeight: 500,
-                        color: urgent ? "var(--exam-urgent)" : examDaysColor(days),
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "8px 0",
+                        borderBottom: isLast
+                          ? "none"
+                          : "0.5px solid var(--border-row)",
                       }}
                     >
-                      {days != null ? `${days} days` : "—"}
-                    </motion.div>
-                  </div>
-                </motion.div>
-              );
-            })}
+                      <SubjectBadge subject={subject.key} showCode />
+                      <div style={{ textAlign: "right" }}>
+                        <div
+                          style={{
+                            fontFamily: "Inter, sans-serif",
+                            fontSize: "12px",
+                            color: "var(--text)",
+                          }}
+                        >
+                          {formatExamShort(iso)}
+                        </div>
+                        <div
+                          style={{
+                            fontFamily: "Inter, sans-serif",
+                            fontSize: "11px",
+                            fontWeight: 500,
+                            color: urgent
+                              ? "var(--exam-urgent)"
+                              : examDaysColor(days),
+                          }}
+                        >
+                          {days != null ? `${days} days` : "—"}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
           </motion.div>
 
         </aside>
         </div>
 
-        {/* Row B â€” Latest Notes (full width, directly below two-column grid) */}
-        <div ref={notesSectionRef}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "baseline",
-            marginBottom: "12px",
-          }}
-        >
-          <h2
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontSize: "11px",
-              fontWeight: 500,
-              letterSpacing: "0.12em",
-              color: "var(--text-dim)",
-              textTransform: "uppercase",
-            }}
-          >
-            Latest Notes
-          </h2>
-          <button
-            type="button"
-            onClick={() => router.push("/features/notes")}
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontSize: "11px",
-              color: "var(--gold)",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              padding: 0,
-            }}
-          >
-            View all &rarr;
-          </button>
-        </div>
 
-        {console.log("[Notes Debug] displayNotes:", displayNotes)}
-        {console.log("[Notes Debug] length:", displayNotes?.length)}
-
-        <motion.div
-          className="dashboard-notes-grid"
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
-            gap: "10px",
-          }}
-          variants={staggerContainer}
-          initial="hidden"
-          animate="visible"
-        >
-          {displayNotes.map((note, index) => {
-            if (!displayNotes || displayNotes.length === 0) {
-              return null;
-            }
-            console.log("[Notes Render] rendering note:", note.title);
-            const subject =
-              note.subject?.toLowerCase() ||
-              resolveSubjectKey(note.subject_name, note.subject_code) ||
-              "economics";
-            const accentColor =
-              subject === "economics"
-                ? "var(--econ-accent)"
-                : subject === "business"
-                  ? "var(--biz-accent)"
-                  : subject === "english"
-                    ? "var(--eng-accent)"
-                    : "var(--ict-accent)";
-
-            return (
-              <motion.div
-                key={note.id}
-                variants={staggerItem}
-                role="button"
-                tabIndex={0}
-                style={{
-                  background: "var(--card)",
-                  border: "0.5px solid var(--gold-dim)",
-                  borderRadius: "10px",
-                  padding: "18px 20px",
-                  cursor: "pointer",
-                  borderLeft: `3px solid ${accentColor}`,
-                  transition: "background 200ms, border-color 200ms",
-                  ...cardDepthStyle,
-                }}
-                whileHover={{
-                  backgroundColor: "var(--card-hover)",
-                  transition: { duration: 0.15 },
-                }}
-                onClick={() => router.push("/features/notes")}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    router.push("/features/notes");
-                  }
-                }}
-              >
-                <div style={{ paddingLeft: "6px" }}>
-                  <SubjectBadge subject={subject} />
-                  <h3
-                    style={{
-                      fontFamily:
-                        "var(--font-playfair), 'Playfair Display', serif",
-                      fontSize: "15px",
-                      color: "var(--text)",
-                      margin: "8px 0 6px",
-                      fontWeight: 700,
-                      lineHeight: 1.3,
-                    }}
-                  >
-                    {note.title}
-                  </h3>
-                  <p
-                    style={{
-                      fontFamily: "Inter, sans-serif",
-                      fontSize: "12px",
-                      color: "var(--text-dim)",
-                      lineHeight: 1.5,
-                      display: "-webkit-box",
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: "vertical",
-                      overflow: "hidden",
-                    }}
-                  >
-                    {note.summary || note.preview
-                      ? stripMarkdown(note.summary || note.preview)
-                      : "No preview available."}
-                  </p>
-                  <span
-                    style={{
-                      fontFamily: "Inter, sans-serif",
-                      fontSize: "10px",
-                      color: "var(--text-extra-dim)",
-                      marginTop: "10px",
-                      display: "block",
-                    }}
-                  >
-                    {note.created_at
-                      ? new Date(note.created_at).toLocaleDateString("en-GB", {
-                          day: "numeric",
-                          month: "short",
-                          year: "numeric",
-                        })
-                      : ""}
-                  </span>
-                </div>
-              </motion.div>
-            );
-          })}
-
-          {isShowingPlaceholders && (
-            <p
-              style={{
-                gridColumn: "1 / -1",
-                fontFamily: "Inter, sans-serif",
-                fontSize: "11px",
-                color: "var(--text-muted)",
-                fontStyle: "italic",
-                textAlign: "center",
-                marginTop: "8px",
-              }}
-            >
-              Sample notes &mdash; sync Classroom to see yours
-            </p>
-          )}
-        </motion.div>
-        </div>
       </div>
     </motion.div>
   );

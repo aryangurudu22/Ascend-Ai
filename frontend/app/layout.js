@@ -8,6 +8,7 @@ import "./globals.css";
 import { ThemeProvider } from "./context/ThemeContext";
 import GrainOverlay from "./components/GrainOverlay";
 import ConditionalNavbar from "./components/ConditionalNavbar";
+import FloatingChat from "./components/FloatingChat";
 
 // Playfair Display — headings (Cambridge prestige feel)
 const playfair = Playfair_Display({
@@ -42,6 +43,7 @@ export default function RootLayout({ children }) {
           <GrainOverlay />
           {/* Global nav — hidden on /login and /onboarding/* */}
           <ConditionalNavbar />
+          <FloatingChat />
           <main>{children}</main>
         </ThemeProvider>
       </body>

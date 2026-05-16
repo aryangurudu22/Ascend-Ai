@@ -61,6 +61,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
@@ -84,7 +85,6 @@ import {
 } from "lucide-react";
 import { supabase } from "../../../lib/supabaseClient";
 import { SUBJECTS } from "../../../lib/subjects";
-import PageHeader from "../../components/PageHeader";
 import SubjectBadge from "../../components/SubjectBadge";
 
 
@@ -113,6 +113,16 @@ const ACCEPTED_MIME = "application/pdf";
 
 // Cambridge runs two exam sessions a year.
 const SESSION_OPTIONS = ["May/June", "October/November"];
+
+// VIEW 1 filter tabs — client-side only (no extra API call).
+const FILTER_ALL = "all";
+const FILTER_OPTIONS = [
+  { value: FILTER_ALL, label: "All" },
+  { value: "economics", label: "Economics" },
+  { value: "business", label: "Business" },
+  { value: "english", label: "English" },
+  { value: "ict", label: "ICT" },
+];
 
 // Year input bounds.
 const MIN_YEAR = 2015;
@@ -1026,19 +1036,109 @@ function buildMockPapers(subjectByKey) {
 // removed during the UI unification pass — every page now imports
 // the shared SubjectBadge from app/components/SubjectBadge.js.)
 
-/**
- * StatCard — one of the four stat tiles at the top of VIEW 1.
- */
+/** VIEW 1 — breadcrumb back to dashboard */
+function PastPapersBreadcrumb() {
+  return (
+    <div
+      style={{
+        padding: "16px var(--page-padding) 0",
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+      }}
+    >
+      <Link
+        href="/dashboard"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          fontFamily: "Inter, sans-serif",
+          fontSize: "13px",
+          color: "var(--text-muted)",
+          textDecoration: "none",
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <path d="M19 12H5M12 19l-7-7 7-7" />
+        </svg>
+        Dashboard
+      </Link>
+      <span style={{ color: "var(--text-muted)", fontSize: "13px" }}>/</span>
+      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-dim)" }}>
+        Past Papers
+      </span>
+    </div>
+  );
+}
+
+/** VIEW 1 — one stat tile in the three-column stats row */
 function StatCard({ value, label }) {
   return (
-    <div className="bg-card border border-input-border rounded-4px p-3 sm:p-4">
-      <p className="font-heading text-gold text-2xl sm:text-3xl font-heading-bold leading-none">
+    <div
+      style={{
+        background: "var(--card)",
+        border: "0.5px solid var(--gold-border)",
+        borderRadius: "10px",
+        padding: "16px 20px",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+      }}
+    >
+      <span style={{ fontFamily: "'Playfair Display', serif", fontSize: "28px", color: "var(--gold)", fontWeight: 700, lineHeight: 1 }}>
         {value}
-      </p>
-      <p className="font-body text-text-muted text-xs mt-2 uppercase tracking-wide">
+      </span>
+      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--date-color)", marginTop: "4px" }}>
         {label}
-      </p>
+      </span>
     </div>
+  );
+}
+
+/** VIEW 1 — subject filter tab (matches notes / homework tabs) */
+function FilterTabButton({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      style={{
+        fontFamily: "Inter, sans-serif",
+        fontSize: "13px",
+        fontWeight: active ? 500 : 400,
+        color: active ? "var(--gold)" : "var(--text-muted)",
+        borderBottom: active ? "2px solid var(--gold)" : "2px solid transparent",
+        paddingBottom: "10px",
+        paddingLeft: "4px",
+        paddingRight: "4px",
+        marginBottom: "-1px",
+        background: "none",
+        borderTop: "none",
+        borderLeft: "none",
+        borderRight: "none",
+        cursor: "pointer",
+        transition: "color 200ms ease",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** VIEW 1 — loading skeleton for one paper row */
+function PaperCardSkeleton() {
+  return (
+    <div
+      className="animate-pulse"
+      style={{
+        background: "var(--card)",
+        border: "0.5px solid var(--gold-border)",
+        borderRadius: "10px",
+        padding: "20px 24px",
+        height: "88px",
+      }}
+    />
   );
 }
 
@@ -1051,23 +1151,36 @@ function Toast({ tone, message, onDismiss }) {
     <div
       role="status"
       aria-live="polite"
-      className={
-        "fixed bottom-6 right-6 z-[80] max-w-sm rounded-4px shadow-md " +
-        "border p-4 pr-10 text-sm bg-white " +
-        (tone === "success"
-          ? "border-gold text-text-primary"
-          : "border-red-200 text-red-700")
-      }
+      style={{
+        position: "fixed",
+        bottom: "24px",
+        right: "24px",
+        zIndex: 80,
+        maxWidth: "360px",
+        background: "var(--card)",
+        border: tone === "success" ? "0.5px solid var(--gold-border)" : "0.5px solid var(--border)",
+        borderRadius: "10px",
+        padding: "16px 40px 16px 16px",
+        fontFamily: "Inter, sans-serif",
+        fontSize: "13px",
+        color: "var(--text)",
+      }}
     >
-      <p className="leading-relaxed font-body">{message}</p>
+      <p style={{ margin: 0, lineHeight: 1.5 }}>{message}</p>
       <button
         type="button"
         onClick={onDismiss}
         aria-label="Dismiss notification"
-        className={
-          "absolute top-2 right-2 text-text-hint hover:text-text-primary " +
-          "transition leading-none text-lg"
-        }
+        style={{
+          position: "absolute",
+          top: "8px",
+          right: "8px",
+          background: "none",
+          border: "none",
+          color: "var(--text-muted)",
+          cursor: "pointer",
+          fontSize: "18px",
+        }}
       >
         ×
       </button>
@@ -1255,103 +1368,92 @@ function SubjectDropdown({ subjectIndex, value, onChange, error }) {
 // PAPER CARD — single card shown in VIEW 1's subject sections.
 // ─────────────────────────────────────────────────────────────
 
+/** VIEW 1 — paper row; View Solution opens VIEW 4 */
 function PaperCard({ paper, subjectMeta, onOpen, onDelete }) {
   const subjectKey = subjectMeta?.key || "economics";
   const subjectName = subjectMeta?.name || "Subject";
   const subjectCode = subjectMeta?.code || "";
-  const hasYearSession = paper.year && paper.session;
-
-  // Build the human-readable title shown under the year/session
-  // chips. When year / session aren't known (real DB row without
-  // those columns yet) we fall back to a simpler title.
-  const title = hasYearSession
-    ? `${subjectName} ${subjectCode} · ${paper.year} ${paper.session}`
-    : `${subjectName} ${subjectCode}`.trim();
-
-  // "Solve mode" chip — full paper vs selected questions.
-  const ModeIcon = paper.mode === SOLVE_MODE.SELECTED ? ListChecks : FileText;
+  const title = `${subjectName} ${subjectCode} · ${paper.year || ""} ${paper.session || ""}`.trim();
   const modeLabel =
     paper.mode === SOLVE_MODE.SELECTED ? "Selected questions" : "Full paper";
-
-  // We CANNOT make the outer wrapper a <button> because the delete
-  // control inside is also a <button>, and HTML forbids nested
-  // buttons (causes a Next.js hydration error). Using role="button"
-  // + tabIndex + an onKeyDown handler keeps the same UX: clickable
-  // from mouse / touch / keyboard, focusable, screen-reader-friendly.
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onOpen(paper);
-    }
-  };
+  const yearSession =
+    paper.year && paper.session
+      ? `${paper.year} · ${paper.session}`
+      : paper.year || paper.session || "";
 
   return (
     <div
-      role="button"
-      tabIndex={0}
-      onClick={() => onOpen(paper)}
-      onKeyDown={handleKeyDown}
-      aria-label={`Open ${title}`}
-      className={
-        "group relative text-left w-full bg-card border border-input-border " +
-        "rounded-4px p-4 transition-all hover:border-gold hover:shadow-md " +
-        "focus:outline-none focus:ring-2 focus:ring-gold/30 cursor-pointer"
-      }
+      className="past-papers-card"
+      style={{
+        background: "var(--card)",
+        border: "0.5px solid var(--gold-border)",
+        borderRadius: "10px",
+        padding: "20px 24px",
+        display: "flex",
+        alignItems: "center",
+        gap: "20px",
+        transition: "background 200ms, border-color 200ms",
+        position: "relative",
+      }}
     >
-      {/* Top row: year + session chips, status icon on the right */}
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          {paper.year && (
-            <span className="font-body font-body-semibold text-text-primary text-sm">
-              {paper.year}
-            </span>
-          )}
-          <SessionChip session={paper.session} />
-        </div>
-        <StatusIcon status={paper.status} />
+      <div className="past-papers-card-left" style={{ flexShrink: 0 }}>
+        <SubjectBadge subject={subjectKey} label={subjectMeta?.name || "Subject"} />
+        {yearSession ? (
+          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", marginBottom: 0 }}>
+            {yearSession}
+          </p>
+        ) : null}
       </div>
 
-      {/* Paper title */}
-      <h3 className="font-heading text-text-primary text-base font-heading-medium mt-1 leading-snug">
-        {title}
-      </h3>
-
-      {/* Solve mode chip + relative time */}
-      <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
-        <span className="inline-flex items-center gap-1 text-text-muted font-body text-xs">
-          <ModeIcon size={12} aria-hidden="true" />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: "15px", color: "var(--text)", fontWeight: 700, margin: 0, lineHeight: 1.3 }}>
+          {title}
+        </h3>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "12px", color: "var(--text-muted)", marginTop: "4px", marginBottom: 0 }}>
           {modeLabel}
-          {paper.mode === SOLVE_MODE.SELECTED && paper.selected_questions && (
-            <span className="text-text-hint">
-              (Q{paper.selected_questions})
-            </span>
-          )}
-        </span>
-        <span className="inline-flex items-center gap-1 text-text-muted font-body text-xs">
-          <Clock size={12} aria-hidden="true" />
+          {paper.mode === SOLVE_MODE.SELECTED && paper.selected_questions
+            ? ` (Q${paper.selected_questions})`
+            : ""}
+        </p>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "11px", color: "var(--text-extra-dim)", marginTop: "2px", marginBottom: 0 }}>
           Solved {timeAgo(paper.uploaded_at)}
-        </span>
+        </p>
       </div>
 
-      {/* Delete button — appears on hover/focus only. We stop
-          propagation so the parent's onOpen doesn't also fire. */}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onDelete(paper);
-        }}
-        aria-label={`Delete ${title}`}
-        className={
-          "absolute top-2 right-2 p-1.5 rounded-4px text-text-muted " +
-          "bg-white/60 opacity-0 group-hover:opacity-100 " +
-          "focus:opacity-100 hover:text-red-600 hover:bg-white " +
-          "transition-opacity focus:outline-none focus:ring-2 " +
-          "focus:ring-red-200"
-        }
-      >
-        <Trash2 size={14} aria-hidden="true" />
-      </button>
+      <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+        <button
+          type="button"
+          onClick={() => onOpen(paper)}
+          className="past-papers-view-btn"
+          style={{
+            background: "transparent",
+            border: "0.5px solid var(--gold-border-active)",
+            borderRadius: "6px",
+            padding: "8px 16px",
+            fontFamily: "Inter, sans-serif",
+            fontSize: "12px",
+            fontWeight: 500,
+            color: "var(--gold)",
+            cursor: "pointer",
+          }}
+        >
+          View Solution →
+        </button>
+        <button
+          type="button"
+          onClick={() => onDelete(paper)}
+          aria-label={`Delete ${title}`}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "var(--text-muted)",
+            cursor: "pointer",
+            padding: "4px",
+          }}
+        >
+          <Trash2 size={14} aria-hidden />
+        </button>
+      </div>
     </div>
   );
 }
@@ -1510,25 +1612,18 @@ function UploadModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="upload-modal-title"
-      className={
-        "fixed inset-0 z-50 flex items-center justify-center p-4 " +
-        "bg-black/40"
-      }
+      style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", background: "rgba(0,0,0,0.7)" }}
       onClick={uploading ? undefined : onCancel}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className={
-          "bg-white border border-input-border rounded-4px " +
-          "shadow-xl w-full max-w-[520px] max-h-[90vh] overflow-y-auto " +
-          "p-6 sm:p-8"
-        }
+        style={{ background: "var(--card)", border: "0.5px solid var(--gold-border)", borderRadius: "12px", padding: "32px", maxWidth: "520px", width: "90vw", maxHeight: "90vh", overflowY: "auto", margin: "auto" }}
       >
         {/* Header */}
         <div className="flex items-start justify-between gap-3 mb-5">
           <h2
             id="upload-modal-title"
-            className="font-heading text-text-primary text-2xl font-heading-bold"
+            style={{ fontFamily: "'Playfair Display', serif", fontSize: "20px", color: "var(--text)", fontWeight: 700, margin: 0 }}
           >
             Upload Past Paper
           </h2>
@@ -1537,11 +1632,18 @@ function UploadModal({
             onClick={onCancel}
             disabled={uploading}
             aria-label="Close modal"
-            className={
-              "p-1 text-text-muted hover:text-text-primary " +
-              "transition-colors rounded-4px focus:outline-none " +
-              "focus:ring-2 focus:ring-gold/30 disabled:opacity-50"
-            }
+            style={{
+              width: "28px",
+              height: "28px",
+              borderRadius: "50%",
+              background: "var(--card-hover)",
+              border: "none",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
           >
             <X size={20} aria-hidden="true" />
           </button>
@@ -1894,8 +1996,6 @@ function UploadModal({
 // this component just renders the visuals.
 
 function ProcessingView({ paper, currentStep, subjectMeta, onCancel }) {
-  // Detail line under the heading — assembled from whatever we
-  // know about this paper.
   const subjectName = subjectMeta?.name || "Subject";
   const subjectCode = subjectMeta?.code || "";
   const detail = [
@@ -1907,62 +2007,39 @@ function ProcessingView({ paper, currentStep, subjectMeta, onCancel }) {
     .join(" · ");
 
   return (
-    <main className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="max-w-[480px] w-full bg-card border border-input-border rounded-4px p-6 sm:p-8 text-center">
-        {/* Pulsing brain — outer ring uses Tailwind's built-in
-            animate-ping (a scale + fade keyframe), inner circle
-            holds the icon. No custom CSS, no inline animation. */}
-        <div className="relative w-20 h-20 mx-auto mb-5">
-          <span
-            aria-hidden="true"
-            className="absolute inset-0 rounded-full border-2 border-gold animate-ping"
-          />
-          <span
-            aria-hidden="true"
-            className="absolute inset-2 rounded-full bg-gold flex items-center justify-center"
-          >
-            <Brain size={28} className="text-white" />
-          </span>
+    <main style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+      <div style={{ maxWidth: "480px", width: "100%", background: "var(--card)", border: "0.5px solid var(--gold-border)", borderRadius: "10px", padding: "32px", textAlign: "center" }}>
+        <div style={{ width: "64px", height: "64px", margin: "0 auto 20px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Loader2 size={40} strokeWidth={1.5} color="var(--gold)" className="animate-spin" aria-hidden />
         </div>
-
-        <h2 className="font-heading text-text-primary text-2xl sm:text-3xl font-heading-bold">
-          {currentStep >= PROCESSING_STEPS.length
-            ? "Solution ready!"
-            : "Solving your paper…"}
+        <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: "24px", color: "var(--text)", fontWeight: 700, margin: 0 }}>
+          {currentStep >= PROCESSING_STEPS.length ? "Solution ready!" : "Solving your paper…"}
         </h2>
-        {detail && (
-          <p className="font-body text-text-muted text-sm mt-1">{detail}</p>
-        )}
-
-        {/* Steps list. Each step shows one of three states based
-            on its index relative to currentStep. */}
-        <ol className="text-left mt-6 space-y-3">
+        {detail ? (
+          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-muted)", marginTop: "8px" }}>{detail}</p>
+        ) : null}
+        <ol style={{ textAlign: "left", marginTop: "24px", padding: 0, listStyle: "none" }}>
           {PROCESSING_STEPS.map((label, i) => {
             const done = i < currentStep;
             const active = i === currentStep;
             const Icon = done ? CheckCircle : active ? Loader2 : Circle;
             return (
-              <li key={label} className="flex items-start gap-3">
+              <li key={label} style={{ display: "flex", alignItems: "flex-start", gap: "12px", marginBottom: "12px" }}>
                 <Icon
                   size={18}
-                  aria-hidden="true"
-                  className={
-                    (done
-                      ? "text-gold"
-                      : active
-                      ? "text-gold animate-spin"
-                      : "text-text-muted") + " flex-shrink-0 mt-0.5"
-                  }
+                  aria-hidden
+                  className={active ? "animate-spin" : ""}
+                  color={done || active ? "var(--gold)" : "var(--text-muted)"}
+                  style={{ flexShrink: 0, marginTop: "2px" }}
                 />
                 <span
-                  className={
-                    "font-body text-sm " +
-                    (done
-                      ? "text-text-muted line-through"
-                      : active
-                      ? "text-text-primary font-body-semibold"
-                      : "text-text-muted")
-                  }
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: "13px",
+                    color: done ? "var(--text-muted)" : active ? "var(--text)" : "var(--text-muted)",
+                    textDecoration: done ? "line-through" : "none",
+                    fontWeight: active ? 500 : 400,
+                  }}
                 >
                   {label}
                 </span>
@@ -1970,14 +2047,10 @@ function ProcessingView({ paper, currentStep, subjectMeta, onCancel }) {
             );
           })}
         </ol>
-
         <button
           type="button"
           onClick={onCancel}
-          className={
-            "mt-6 font-body text-text-muted text-sm hover:text-gold " +
-            "transition-colors focus:outline-none focus:underline"
-          }
+          style={{ marginTop: "16px", background: "none", border: "none", fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-muted)", cursor: "pointer" }}
         >
           Cancel
         </button>
@@ -1985,6 +2058,7 @@ function ProcessingView({ paper, currentStep, subjectMeta, onCancel }) {
     </main>
   );
 }
+
 
 
 // ─────────────────────────────────────────────────────────────
@@ -2014,44 +2088,52 @@ function QuestionBlock({
    * headers that each act as the collapse toggle. We render the
    * chevron based on whether the section is expanded.
    */
+  // Collapsible section header — toggles mark scheme / examiner insights
   const SectionHeader = ({ label, sectionKey, isOpen }) => (
     <button
       type="button"
       onClick={() => onToggle(sectionKey)}
       aria-expanded={isOpen}
-      className={
-        "w-full flex items-center justify-between text-left py-2 " +
-        "hover:text-gold transition-colors focus:outline-none " +
-        "focus:ring-2 focus:ring-gold/30 rounded-4px"
-      }
+      style={{
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: "none",
+        border: "none",
+        cursor: "pointer",
+        padding: "8px 0",
+      }}
     >
-      <span className="font-body text-text-muted text-[11px] uppercase tracking-widest font-body-semibold">
+      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--text-muted)" }}>
         {label}
       </span>
       {isOpen ? (
-        <ChevronUp size={16} aria-hidden="true" className="text-text-muted" />
+        <ChevronUp size={16} color="var(--text-muted)" aria-hidden />
       ) : (
-        <ChevronDown
-          size={16}
-          aria-hidden="true"
-          className="text-text-muted"
-        />
+        <ChevronDown size={16} color="var(--text-muted)" aria-hidden />
       )}
     </button>
   );
 
   return (
     <article>
-      <header className="flex items-center gap-3 flex-wrap mb-6">
-        <h3 className="font-heading text-text-primary text-xl font-heading-bold">
+      <header style={{ display: "flex", alignItems: "center", flexWrap: "wrap", marginBottom: "16px" }}>
+        <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: "20px", color: "var(--text)", fontWeight: 700, margin: 0 }}>
           Question {question.number}
         </h3>
         {question.marks_available != null && (
           <span
-            className={
-              "font-body text-xs bg-gold text-background rounded-4px " +
-              "px-[10px] py-[3px] font-body-semibold"
-            }
+            style={{
+              background: "var(--gold-dim)",
+              border: "0.5px solid var(--gold-border-active)",
+              borderRadius: "3px",
+              padding: "3px 10px",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "11px",
+              color: "var(--gold)",
+              marginLeft: "12px",
+            }}
           >
             [{question.marks_available} marks]
           </span>
@@ -2059,77 +2141,80 @@ function QuestionBlock({
       </header>
 
       {question.question_text ? (
-        <section className="mb-5">
-          <p className="font-body text-text-muted text-[11px] uppercase tracking-widest mb-2">
-            Question
+        <section style={{ marginBottom: "20px" }}>
+          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--date-color)", marginBottom: "8px" }}>
+            QUESTION
           </p>
           <div
-            className={
-              "border-l-[3px] border-gold bg-card rounded-4px p-4"
-            }
+            style={{
+              background: "var(--nav-icon-bg)",
+              borderLeft: "2px solid var(--gold)",
+              border: "0.5px solid var(--chat-bubble-border)",
+              borderRadius: "6px",
+              padding: "14px 16px",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "13px",
+              color: "var(--text)",
+              lineHeight: 1.7,
+            }}
           >
-            <p className="font-body text-text-primary text-[15px] leading-[1.7]">
-              {question.question_text}
-            </p>
+            {question.question_text}
           </div>
         </section>
       ) : null}
 
-      <section className="mb-2">
-        <p className="font-body text-text-muted text-[11px] uppercase tracking-widest mb-2 mt-5">
-          Model answer
+      <section style={{ marginBottom: "16px" }}>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--date-color)", marginBottom: "8px" }}>
+          MODEL ANSWER
         </p>
         {paragraphs.length > 0 ? (
           paragraphs.map((para, i) => (
             <p
               key={i}
-              className={
-                "font-body text-text-primary text-[15px] leading-[1.8] " +
-                "mb-3 last:mb-0"
-              }
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "14px",
+                color: "var(--text)",
+                lineHeight: 1.8,
+                marginBottom: "12px",
+              }}
             >
               {para}
             </p>
           ))
         ) : (
-          <p className="font-body text-text-muted text-sm">
+          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-muted)" }}>
             No model answer available for this question.
           </p>
         )}
       </section>
 
-      <div className="border-t border-input-border mt-4">
+      <div style={{ marginTop: "16px" }}>
         <SectionHeader
-          label="Mark scheme breakdown"
+          label="MARK SCHEME BREAKDOWN"
           sectionKey={schemeKey}
           isOpen={!!expanded[schemeKey]}
         />
         {expanded[schemeKey] && (
-          <div className="pb-3">
-            {/* Two-column table — alternating row backgrounds.
-                We use Tailwind's `even:` modifier so we don't
-                have to compute parity in JS. */}
-            <table className="w-full text-left border border-input-border">
+          <div style={{ marginTop: "8px", border: "0.5px solid var(--chat-bubble-border)", borderRadius: "6px", overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
               <thead>
-                <tr className="bg-card">
-                  <th className="font-body text-text-muted text-xs uppercase tracking-wide px-3 py-2">
+                <tr style={{ background: "var(--accordion-gap-bg)" }}>
+                  <th style={{ fontFamily: "Inter, sans-serif", fontSize: "11px", textTransform: "uppercase", color: "var(--date-color)", padding: "10px 14px" }}>
                     What examiners look for
                   </th>
-                  <th className="font-body text-text-muted text-xs uppercase tracking-wide px-3 py-2 w-20 text-right">
+                  <th style={{ fontFamily: "Inter, sans-serif", fontSize: "11px", textTransform: "uppercase", color: "var(--date-color)", padding: "10px 14px", width: "80px", textAlign: "right" }}>
                     Marks
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {question.mark_scheme?.map((row, i) => (
-                  <tr
-                    key={i}
-                    className={i % 2 === 0 ? "bg-card" : "bg-background"}
-                  >
-                    <td className="font-body text-text-primary text-sm px-3 py-2 leading-relaxed">
+                  <tr key={i} style={{ borderTop: "0.5px solid var(--border)" }}>
+                    <td style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text)", padding: "10px 14px", lineHeight: 1.5 }}>
                       {row.criterion}
                     </td>
-                    <td className="font-body text-text-primary text-sm px-3 py-2 text-right">
+                    <td style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text)", padding: "10px 14px", textAlign: "right" }}>
                       {row.marks}
                     </td>
                   </tr>
@@ -2140,56 +2225,28 @@ function QuestionBlock({
         )}
       </div>
 
-      {/* ── Section 3 — Examiner Insights ──────────────────── */}
-      <div className="border-t border-input-border">
+      <div style={{ marginTop: "12px" }}>
         <SectionHeader
-          label="Examiner insights"
+          label="EXAMINER INSIGHTS"
           sectionKey={tipsKey}
           isOpen={!!expanded[tipsKey]}
         />
         {expanded[tipsKey] && (
-          <div className="pb-3 space-y-3">
-            {question.examiner_tip && (
-              <div
-                className={
-                  "border-l-[3px] border-gold bg-card pl-3 py-2 rounded-4px"
-                }
-              >
-                <p className="font-body text-text-primary text-sm leading-relaxed">
-                  <span className="text-gold font-body-semibold">
-                    Examiner Tip:{" "}
-                  </span>
-                  {question.examiner_tip}
-                </p>
-              </div>
-            )}
-
-            {/* Common mistakes — each starts with red "Mistake:" */}
-            {question.common_mistakes?.length > 0 && (
-              <ul className="space-y-2">
-                {question.common_mistakes.map((m, i) => (
-                  <li
-                    key={i}
-                    className="font-body text-text-primary text-sm leading-relaxed"
-                  >
-                    <span className="font-body-semibold">Mistake: </span>
-                    <span>{m.mistake}</span>
-                    {m.explanation ? (
-                      <span className="text-text-muted">
-                        {" "}
-                        {m.explanation}
-                      </span>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
+          <div style={{ padding: "8px 0 12px", fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-dim)", lineHeight: 1.7 }}>
+            {question.examiner_tip && <p style={{ margin: "0 0 12px" }}>{question.examiner_tip}</p>}
+            {question.common_mistakes?.map((m, i) => (
+              <p key={i} style={{ margin: "0 0 8px" }}>
+                <strong>Mistake:</strong> {m.mistake}
+                {m.explanation ? ` — ${m.explanation}` : ""}
+              </p>
+            ))}
           </div>
         )}
       </div>
     </article>
   );
 }
+
 
 
 // ─────────────────────────────────────────────────────────────
@@ -2227,52 +2284,58 @@ function SolutionView({
       : "Full Paper";
 
   return (
-    <main className="min-h-screen bg-background flex flex-col">
+    <main style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
       <header
-        className={
-          "sticky top-0 z-10 bg-card border-b border-input-border " +
-          "px-4 py-3 flex items-center gap-3"
-        }
+        style={{
+          padding: "16px var(--page-padding)",
+          borderBottom: "1px solid var(--border-light)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "12px",
+        }}
       >
         <button
           type="button"
           onClick={onBack}
           aria-label="Back to papers library"
-          className={
-            "p-2 rounded-4px text-text-muted hover:text-gold " +
-            "hover:bg-hover transition-colors focus:outline-none " +
-            "focus:ring-2 focus:ring-gold/30"
-          }
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: 0,
+            color: "var(--text-muted)",
+          }}
         >
-          <ArrowLeft size={18} aria-hidden="true" />
+          <ArrowLeft size={18} aria-hidden />
+          <span style={{ fontFamily: "'Playfair Display', serif", fontSize: "16px", color: "var(--text)", fontWeight: 700 }}>
+            {headerTitle}
+          </span>
         </button>
-
-        <h1 className="flex-1 text-center font-heading text-text-primary text-base sm:text-lg font-heading-medium truncate px-2">
-          {headerTitle}
-        </h1>
-
         <span
-          className={
-            "inline-flex items-center shrink-0 px-3 py-1 rounded-4px " +
-            "border border-gold text-gold font-body text-xs font-body-semibold"
-          }
+          style={{
+            border: "0.5px solid var(--gold-border-active)",
+            borderRadius: "4px",
+            padding: "3px 10px",
+            fontFamily: "Inter, sans-serif",
+            fontSize: "11px",
+            color: "var(--gold)",
+            flexShrink: 0,
+          }}
         >
           {modeLabel}
         </span>
       </header>
 
-      <div className="flex-1 w-full max-w-[860px] mx-auto px-4 md:px-8 py-8">
+      <div style={{ flex: 1, maxWidth: "860px", margin: "0 auto", width: "100%", padding: "24px var(--page-padding) 40px" }}>
         {!solution || !solution.questions?.length ? (
-          <div className="text-center py-12">
-            <FileQuestion
-              size={36}
-              aria-hidden="true"
-              className="mx-auto text-text-muted mb-3"
-            />
-            <p className="font-body text-text-primary text-sm">
-              No stored solution for this paper.
-            </p>
-            <p className="font-body text-text-muted text-xs mt-1">
+          <div style={{ textAlign: "center", padding: "48px 0" }}>
+            <FileQuestion size={36} color="var(--text-muted)" aria-hidden style={{ margin: "0 auto 12px", display: "block" }} />
+            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text)" }}>No stored solution for this paper.</p>
+            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>
               Re-upload to regenerate the AI solution.
             </p>
           </div>
@@ -2281,7 +2344,7 @@ function SolutionView({
             {solution.questions.map((q, i) => (
               <div key={i}>
                 {i > 0 ? (
-                  <hr className="border-0 border-t border-input-border my-8" />
+                  <hr style={{ border: "none", borderTop: "1px solid var(--border)", margin: "28px 0" }} />
                 ) : null}
                 <QuestionBlock
                   question={q}
@@ -2295,46 +2358,36 @@ function SolutionView({
             {solution.summary ? (
               <section
                 aria-label="Paper Summary"
-                className="bg-card border border-input-border rounded-4px p-6 mt-8"
+                style={{
+                  background: "var(--card)",
+                  border: "0.5px solid var(--gold-border)",
+                  borderRadius: "10px",
+                  padding: "24px",
+                  marginTop: "32px",
+                }}
               >
-                <h3 className="font-heading text-text-primary text-lg font-heading-bold mb-4">
+                <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: "18px", color: "var(--text)", fontWeight: 700, margin: "0 0 16px" }}>
                   Paper Summary
                 </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 font-body">
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "20px" }}>
                   <div>
-                    <p className="text-text-muted text-[11px] uppercase tracking-widest mb-1">
-                      Total marks
-                    </p>
-                    <p className="text-text-primary text-sm">
-                      {solution.summary.total_marks ?? "—"}
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--date-color)", marginBottom: "4px" }}>Total marks</p>
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text)" }}>{solution.summary.total_marks ?? "—"}</p>
+                  </div>
+                  <div>
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--date-color)", marginBottom: "4px" }}>Key topics</p>
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text)", lineHeight: 1.5 }}>
+                      {solution.summary.key_topics?.length ? solution.summary.key_topics.join(", ") : "—"}
                     </p>
                   </div>
                   <div>
-                    <p className="text-text-muted text-[11px] uppercase tracking-widest mb-1">
-                      Key topics
-                    </p>
-                    <p className="text-text-primary text-sm leading-relaxed">
-                      {solution.summary.key_topics?.length
-                        ? solution.summary.key_topics.join(", ")
-                        : "—"}
-                    </p>
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--date-color)", marginBottom: "4px" }}>Difficulty</p>
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text)" }}>{solution.summary.difficulty ?? "—"}</p>
                   </div>
                   <div>
-                    <p className="text-text-muted text-[11px] uppercase tracking-widest mb-1">
-                      Difficulty
-                    </p>
-                    <p className="text-text-primary text-sm">
-                      {solution.summary.difficulty ?? "—"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-text-muted text-[11px] uppercase tracking-widest mb-1">
-                      Revision areas
-                    </p>
-                    <p className="text-text-primary text-sm leading-relaxed">
-                      {solution.summary.revision_areas?.length
-                        ? solution.summary.revision_areas.join(", ")
-                        : "—"}
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--date-color)", marginBottom: "4px" }}>Revision areas</p>
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text)", lineHeight: 1.5 }}>
+                      {solution.summary.revision_areas?.length ? solution.summary.revision_areas.join(", ") : "—"}
                     </p>
                   </div>
                 </div>
@@ -2347,17 +2400,19 @@ function SolutionView({
           <div
             role="status"
             aria-live="polite"
-            className={
-              "mt-8 flex items-start gap-3 p-4 rounded-4px " +
-              "border border-gold bg-gold/10"
-            }
+            style={{
+              marginTop: "32px",
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "12px",
+              padding: "16px",
+              borderRadius: "6px",
+              border: "0.5px solid var(--gold-border)",
+              background: "var(--chat-bubble-bg)",
+            }}
           >
-            <Sparkles
-              size={16}
-              aria-hidden="true"
-              className="text-gold flex-shrink-0 mt-0.5"
-            />
-            <p className="font-body text-text-muted text-[13px] leading-relaxed">
+            <Sparkles size={16} color="var(--gold)" aria-hidden style={{ flexShrink: 0, marginTop: "2px" }} />
+            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-muted)", margin: 0, lineHeight: 1.6 }}>
               Study notes are being generated from this paper…
             </p>
           </div>
@@ -2503,6 +2558,9 @@ export default function PastPapersPage() {
   // id (not a boolean) so opening a different paper doesn't
   // accidentally inherit the banner from a previous solve.
   const [notesGeneratingPaperId, setNotesGeneratingPaperId] = useState(null);
+
+  // VIEW 1 — active subject filter tab (All | Economics | …).
+  const [activeFilter, setActiveFilter] = useState(FILTER_ALL);
 
 
   // ───────────────────────────────────────────────────────────
@@ -3026,6 +3084,15 @@ export default function PastPapersPage() {
     return { total, thisMonth, distinctSubjects };
   }, [papers]);
 
+  // Filter logic — narrows the flat papers list by subject key.
+  const filteredPapers = useMemo(() => {
+    if (activeFilter === FILTER_ALL) return papers;
+    return papers.filter((paper) => {
+      const meta = subjectIndex.byId[paper.subject_id];
+      return meta?.key === activeFilter;
+    });
+  }, [papers, activeFilter, subjectIndex]);
+
   // Papers grouped by subject_id so VIEW 1 can render one
   // section per subject. Returns an array preserving the
   // subjectIndex.ordered order so Economics shows first, etc.
@@ -3438,7 +3505,7 @@ export default function PastPapersPage() {
   // ───────────────────────────────────────────────────────────
   if (!authReady) {
     return (
-      <main className="min-h-screen bg-background flex items-center justify-center">
+      <main style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div className="inline-flex items-center gap-2 text-text-muted font-body text-sm">
           <Loader2 size={16} className="animate-spin" aria-hidden="true" />
           Loading past papers…
@@ -3504,162 +3571,132 @@ export default function PastPapersPage() {
 
 
   // ───────────────────────────────────────────────────────────
-  // RENDER — VIEW 1 (library) — the default body.
-  // ───────────────────────────────────────────────────────────
+  // RENDER — VIEW 1 (library) — mockup layout
   const hasPapers = papers.length > 0;
+  const listPapers = filteredPapers;
 
   return (
-    <main className="min-h-screen bg-background">
-      <div className="max-w-7xl mx-auto px-4 sm:px-8 py-6">
-        {/* Unified shared page header. Upload Paper is in the
-            action slot so its visual treatment matches every
-            other page's primary CTA. */}
-        <PageHeader
-          title="Past Papers"
-          subtitle="Upload and solve Cambridge past papers with AI"
-          action={
-            <button
-              type="button"
-              onClick={() => setUploadOpen(true)}
-              // Primary button — gold filled, unified style (Task 10).
-              className={
-                "inline-flex items-center gap-2 px-5 py-2.5 " +
-                "rounded-4px bg-gold text-background font-body " +
-                "font-body-semibold text-sm transition " +
-                "hover:brightness-90 focus-visible:outline-none " +
-                "focus-visible:ring-2 focus-visible:ring-gold " +
-                "focus-visible:ring-offset-2 " +
-                "focus-visible:ring-offset-background"
-              }
-            >
-              <Upload size={16} aria-hidden="true" />
-              Upload Paper
-            </button>
-          }
-        />
+    <main style={{ minHeight: "100vh", background: "var(--bg)" }}>
+      <style>{`
+        .past-papers-stats { margin: 20px var(--page-padding) 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+        .past-papers-card:hover { background: var(--card-hover) !important; border-color: var(--gold-border-active) !important; }
+        .past-papers-view-btn:hover { background: var(--chat-bubble-bg) !important; }
+        @media (max-width: 767px) {
+          .past-papers-stats { grid-template-columns: 1fr; }
+          .past-papers-card-left { display: none !important; }
+        }
+      `}</style>
 
-        {/* ── Stats row (4 tiles) ────────────────────────── */}
-        <section
-          aria-label="Past paper statistics"
-          className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8"
+      <PastPapersBreadcrumb />
+
+      <header style={{ padding: "20px var(--page-padding) 0", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px", flexWrap: "wrap" }}>
+        <div>
+          <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: "28px", color: "var(--text)", fontWeight: 700, margin: 0 }}>Past Papers</h1>
+          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-muted)", marginTop: "4px", marginBottom: 0 }}>
+            Upload and solve Cambridge past papers with AI
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setUploadOpen(true)}
+          style={{
+            background: "var(--gold)",
+            border: "none",
+            borderRadius: "8px",
+            padding: "10px 18px",
+            fontFamily: "Inter, sans-serif",
+            fontSize: "13px",
+            fontWeight: 500,
+            color: "var(--bg)",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+          }}
         >
-          <StatCard value={stats.total} label="Total papers solved" />
-          <StatCard value={stats.thisMonth} label="This month" />
-          <StatCard value="Coming soon" label="Average score" />
-          <StatCard
-            value={stats.distinctSubjects}
-            label="Subjects covered"
-          />
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+          Upload Paper
+        </button>
+      </header>
+
+      <section aria-label="Past paper statistics" className="past-papers-stats">
+        <StatCard value={stats.total} label="TOTAL PAPERS SOLVED" />
+        <StatCard value={stats.thisMonth} label="THIS MONTH" />
+        <StatCard value={stats.distinctSubjects} label="SUBJECTS COVERED" />
+      </section>
+
+      <nav
+        aria-label="Filter papers by subject"
+        style={{ margin: "20px var(--page-padding) 0", borderBottom: "1px solid var(--border-light)", display: "flex", gap: "24px", flexWrap: "wrap" }}
+      >
+        {FILTER_OPTIONS.map((opt) => (
+          <FilterTabButton key={opt.value} active={activeFilter === opt.value} onClick={() => setActiveFilter(opt.value)}>
+            {opt.label}
+          </FilterTabButton>
+        ))}
+      </nav>
+
+      {papersLoading ? (
+        <section aria-label="Loading papers" style={{ margin: "16px var(--page-padding) 32px", display: "flex", flexDirection: "column", gap: "8px" }}>
+          <PaperCardSkeleton />
+          <PaperCardSkeleton />
+          <PaperCardSkeleton />
         </section>
-
-        {/* ── Body — loading / empty / sections ──────────── */}
-        {papersLoading ? (
-          <section
-            aria-label="Loading papers"
-            className="flex items-center justify-center py-20 text-text-muted font-body text-sm"
+      ) : !hasPapers ? (
+        <section aria-label="No past papers yet" style={{ margin: "16px var(--page-padding) 48px", textAlign: "center" }}>
+          <Upload size={32} color="var(--gold-icon)" aria-hidden style={{ margin: "0 auto 16px", display: "block" }} />
+          <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: "16px", color: "var(--text)", margin: 0 }}>No papers yet</h2>
+          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-muted)", marginTop: "8px" }}>
+            Upload a Cambridge past paper to get started
+          </p>
+          <button
+            type="button"
+            onClick={() => setUploadOpen(true)}
+            style={{
+              marginTop: "20px",
+              background: "var(--gold)",
+              border: "none",
+              borderRadius: "8px",
+              padding: "10px 18px",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "13px",
+              fontWeight: 500,
+              color: "var(--bg)",
+              cursor: "pointer",
+            }}
           >
-            <Loader2
-              size={16}
-              className="animate-spin mr-2"
-              aria-hidden="true"
-            />
-            Loading your papers…
-          </section>
-        ) : !hasPapers ? (
-          // ── EMPTY STATE ─────────────────────────────────
-          <section
-            aria-label="No past papers yet"
-            className={
-              "max-w-xl mx-auto bg-card border border-input-border " +
-              "rounded-4px p-6 sm:p-8 text-center"
-            }
-          >
-            <FileQuestion
-              size={40}
-              aria-hidden="true"
-              className="text-gold mx-auto mb-3"
-            />
-            <h2 className="font-heading text-text-primary text-2xl font-heading-bold">
-              No past papers yet
-            </h2>
-            <p className="font-body text-text-muted text-sm mt-2 leading-relaxed">
-              Upload your first Cambridge past paper and get a complete
-              AI-generated solution in seconds.
+            Upload Paper
+          </button>
+        </section>
+      ) : (
+        <section aria-label="Papers list" style={{ margin: "16px var(--page-padding) 32px", display: "flex", flexDirection: "column", gap: "8px" }}>
+          {listPapers.length === 0 ? (
+            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-muted)", textAlign: "center", padding: "24px" }}>
+              No papers for this subject yet.
             </p>
-            <button
-              type="button"
-              onClick={() => setUploadOpen(true)}
-              className={
-                "mt-5 inline-flex items-center justify-center gap-2 " +
-                "px-4 py-3 rounded-4px bg-gold text-background font-body " +
-                "font-body-semibold text-sm hover:bg-gold-light " +
-                "transition-colors focus:outline-none focus:ring-2 " +
-                "focus:ring-gold/30"
-              }
-            >
-              <Upload size={16} aria-hidden="true" />
-              Upload Paper
-            </button>
-          </section>
-        ) : (
-          // ── ONE SECTION PER SUBJECT ────────────────────
-          <>
-            {papersBySubject.map(({ subject, papers: subjectPapers }) => (
-              <section
-                key={subject.id}
-                aria-label={`${subject.name} papers`}
-                className="mb-8"
-              >
-                {/* Section header (Task 7) — one single line:
-                    badge + subject name (Playfair Display 18px
-                    bold) + paper count. The previously-rendered
-                    large duplicate H1 was removed because it
-                    visually competed with the badge.            */}
-                <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
-                  <div className="flex items-center gap-3">
-                    <SubjectBadge subject={subject} label={subject.name} />
-                    <h2 className="font-heading text-text-primary text-lg font-heading-bold leading-tight">
-                      {subject.name}
-                    </h2>
-                    <span className="font-body text-text-muted text-sm">
-                      {subjectPapers.length} paper
-                      {subjectPapers.length === 1 ? "" : "s"}
-                    </span>
-                  </div>
-                </div>
+          ) : (
+            listPapers.map((paper) => (
+              <PaperCard
+                key={paper.id}
+                paper={paper}
+                subjectMeta={subjectIndex.byId[paper.subject_id]}
+                onOpen={handleOpenPaper}
+                onDelete={(pap) => setDeleteConfirm({ paper: pap })}
+              />
+            ))
+          )}
+          {usingMock && (
+            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "12px", color: "var(--text-muted)", textAlign: "center", marginTop: "8px" }}>
+              Showing sample papers while your library is being set up.
+            </p>
+          )}
+        </section>
+      )}
 
-                {/* Gold underline — same 2 px treatment used by
-                    PageHeader, so every section anchor on the
-                    page reads as part of the same design system. */}
-                <div className="h-[2px] w-full bg-gold mb-4" aria-hidden="true" />
-
-                <div
-                  className={
-                    "grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4"
-                  }
-                >
-                  {subjectPapers.map((paper) => (
-                    <PaperCard
-                      key={paper.id}
-                      paper={paper}
-                      subjectMeta={subject}
-                      onOpen={handleOpenPaper}
-                      onDelete={(p) => setDeleteConfirm({ paper: p })}
-                    />
-                  ))}
-                </div>
-              </section>
-            ))}
-
-            {usingMock && (
-              <p className="text-xs text-text-hint text-center font-body mt-2">
-                Showing sample papers while your library is being set up.
-                Real uploads will replace these once you add your first.
-              </p>
-            )}
-          </>
-        )}
-      </div>
 
       {/* ── Overlays ───────────────────────────────────── */}
       {uploadOpen && (

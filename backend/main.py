@@ -40,7 +40,7 @@ from contextlib import asynccontextmanager
 # Each feature lives in its own router file under routers/.
 # Importing the module here gives us `homework.router`, which we
 # then bolt onto the FastAPI app below via include_router(...).
-from routers import homework, flashcards, quiz, timetable, onboarding, past_papers, notes, auth  # noqa: F401 — registered below
+from routers import homework, flashcards, quiz, timetable, onboarding, past_papers, notes, auth, chat, analytics, syllabus  # noqa: F401 — registered below
 
 # ============================================================
 # LOAD SECRET KEYS
@@ -93,6 +93,25 @@ async def lifespan(app: FastAPI):
     print("[START] AscendAI backend is starting up...")
     print("        Health check at: http://localhost:8001/")
     print("        API docs at:     http://localhost:8001/docs")
+
+    # Essay Checker history needs the essay_checks table in Supabase.
+    # DDL cannot run through the REST client — apply the migration once:
+    # backend/migrations/essay_checks.sql (Supabase SQL Editor).
+    try:
+        supabase.table("essay_checks").select("id").limit(1).execute()
+    except Exception:
+        print(
+            "[WARN] essay_checks table not found — run "
+            "backend/migrations/essay_checks.sql in Supabase SQL Editor"
+        )
+
+    try:
+        supabase.table("syllabus_topics").select("id").limit(1).execute()
+    except Exception:
+        print(
+            "[WARN] syllabus_topics table not found — run "
+            "backend/migrations/syllabus_topics.sql in Supabase SQL Editor"
+        )
 
     yield  # The app runs here — everything above is startup, below is shutdown
 
@@ -209,6 +228,16 @@ app.include_router(notes.router, prefix="/notes", tags=["Notes"])
 # after login so Classroom / Drive / YouTube scopes are stored
 # on the student's profile row.
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
+
+# Floating Chat — global assistant bubble; conversational Groq
+# replies with page context and optional conversation history.
+app.include_router(chat.router, prefix="/chat", tags=["Chat"])
+
+# Study Analytics — summary stats, subject breakdown, activity feed.
+app.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
+
+# Syllabus — PDF topic extraction, coverage tracker, toggle endpoints.
+app.include_router(syllabus.router, prefix="/syllabus", tags=["Syllabus"])
 
 # Google Classroom read API — lives in notes.py but mounted at
 # /classroom so n8n and /docs show GET /classroom/posts.
