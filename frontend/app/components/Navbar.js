@@ -1,20 +1,23 @@
 // ============================================================
 // FILE: app/components/Navbar.js
 // PURPOSE: Global sticky navigation — logo, search palette,
-//          notifications dropdown, theme toggle, profile.
+//          live notifications dropdown, theme toggle, profile.
 // ============================================================
 
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Calendar, Zap, FileText } from "lucide-react";
 import { useTheme } from "@/app/context/ThemeContext";
 import { supabase } from "@/lib/supabaseClient";
 import SearchPalette from "./SearchPalette";
 
+// Backend base URL — same pattern as dashboard and feature pages.
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
+
+// Shared icon button chrome for search, bell, theme, profile.
 const iconButtonBase = {
   width: 34,
   height: 34,
@@ -28,6 +31,7 @@ const iconButtonBase = {
   color: "var(--nav-icon-color)",
 };
 
+// Circular nav control with hover lift.
 function NavIconButton({ ariaLabel, onClick, children, style = {}, className = "" }) {
   return (
     <motion.button
@@ -47,35 +51,93 @@ function NavIconButton({ ariaLabel, onClick, children, style = {}, className = "
   );
 }
 
-const INITIAL_NOTIFICATIONS = [
-  {
-    id: "1",
-    type: "info",
-    Icon: Calendar,
-    title: "Timetable generated",
-    desc: "Your 2-week study plan is ready",
-    time: "2 hours ago",
-    unread: true,
-  },
-  {
-    id: "2",
-    type: "success",
-    Icon: Zap,
-    title: "8 flashcards created",
-    desc: "From Price Elasticity of Demand note",
-    time: "Yesterday",
-    unread: true,
-  },
-  {
-    id: "3",
-    type: "info",
-    Icon: FileText,
-    title: "Past paper solved",
-    desc: "Economics 9708 · 2023 May/June",
-    time: "3 days ago",
-    unread: false,
-  },
-];
+// Map notification type → feature route when a row is clicked.
+function routeForNotificationType(type) {
+  switch (type) {
+    case "timetable":
+      return "/features/timetable";
+    case "flashcards":
+      return "/features/flashcards";
+    case "paper":
+      return "/features/past-papers";
+    case "notes":
+      return "/features/notes";
+    case "exam_alert":
+      return "/syllabus";
+    default:
+      return "/dashboard";
+  }
+}
+
+// 16px SVG icons — stroke uses currentColor (gold or urgent via parent).
+function NotifIconCalendar() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+}
+
+function NotifIconLayers() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <polygon points="12 2 2 7 12 12 22 7 12 2" />
+      <polyline points="2 17 12 22 22 17" />
+      <polyline points="2 12 12 17 22 12" />
+    </svg>
+  );
+}
+
+function NotifIconBookOpen() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+      <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+    </svg>
+  );
+}
+
+function NotifIconFile() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+    </svg>
+  );
+}
+
+function NotifIconAlertCircle() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="8" x2="12" y2="12" />
+      <line x1="12" y1="16" x2="12.01" y2="16" />
+    </svg>
+  );
+}
+
+// Pick the icon component for each backend notification type.
+function NotificationTypeIcon({ type }) {
+  const isAlert = type === "exam_alert";
+  const color = isAlert ? "var(--exam-urgent)" : "var(--gold)";
+  switch (type) {
+    case "timetable":
+      return <span style={{ color }}><NotifIconCalendar /></span>;
+    case "flashcards":
+      return <span style={{ color }}><NotifIconLayers /></span>;
+    case "paper":
+      return <span style={{ color }}><NotifIconBookOpen /></span>;
+    case "notes":
+      return <span style={{ color }}><NotifIconFile /></span>;
+    case "exam_alert":
+      return <span style={{ color }}><NotifIconAlertCircle /></span>;
+    default:
+      return <span style={{ color: "var(--gold)" }}><NotifIconFile /></span>;
+  }
+}
 
 export default function Navbar() {
   const { theme, toggleTheme } = useTheme();
@@ -84,24 +146,63 @@ export default function Navbar() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [notifications, setNotifications] = useState(INITIAL_NOTIFICATIONS);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifLoading, setNotifLoading] = useState(false);
   const [user, setUser] = useState(null);
   const notifWrapRef = useRef(null);
   const profileRef = useRef(null);
 
-  const hasUnread = notifications.some((n) => n.unread);
-
+  // Sign out and return to login.
   const handleProfileClick = async () => {
     await supabase.auth.signOut();
     router.replace("/login");
   };
 
+  // Load Supabase session for profile menu display name / email.
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user || null);
     });
   }, []);
 
+  // Fetch notifications from GET /notifications with Bearer token.
+  const fetchNotifications = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      setNotifications([]);
+      setUnreadCount(0);
+      return;
+    }
+
+    setNotifLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/notifications`, {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      if (!res.ok) {
+        return;
+      }
+      const data = await res.json();
+      setNotifications(data.notifications || []);
+      setUnreadCount(typeof data.unread_count === "number" ? data.unread_count : 0);
+    } catch {
+      // Silent — bell keeps last known state on network blips.
+    } finally {
+      setNotifLoading(false);
+    }
+  }, []);
+
+  // Initial fetch on mount + poll every 60 seconds.
+  useEffect(() => {
+    fetchNotifications();
+    const intervalId = setInterval(fetchNotifications, 60000);
+    return () => clearInterval(intervalId);
+  }, [fetchNotifications]);
+
+  // Close profile menu when clicking outside.
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (profileRef.current && !profileRef.current.contains(e.target)) {
@@ -137,9 +238,54 @@ export default function Navbar() {
     return () => document.removeEventListener("mousedown", onPointer);
   }, [notifOpen]);
 
-  const markAllRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, unread: false })));
+  // PATCH /notifications/read-all then refresh list.
+  const markAllRead = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return;
+
+    try {
+      await fetch(`${API_URL}/notifications/read-all`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      await fetchNotifications();
+    } catch {
+      // Ignore — user can retry from the dropdown.
+    }
   };
+
+  // PATCH one notification read, update local state, navigate to feature.
+  const handleNotificationClick = async (notif) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token && notif.id) {
+      try {
+        await fetch(`${API_URL}/notifications/${notif.id}/read`, {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        });
+      } catch {
+        // Still navigate even if mark-read fails.
+      }
+    }
+
+    setNotifications((prev) =>
+      prev.map((n) =>
+        n.id === notif.id ? { ...n, is_read: true } : n
+      )
+    );
+    setUnreadCount((prev) => Math.max(0, prev - (notif.is_read ? 0 : 1)));
+
+    setNotifOpen(false);
+    router.push(routeForNotificationType(notif.type));
+  };
+
+  // Badge label on the bell — count or 9+ cap.
+  const badgeLabel =
+    unreadCount >= 10 ? "9+" : unreadCount > 0 ? String(unreadCount) : null;
 
   return (
     <>
@@ -193,7 +339,7 @@ export default function Navbar() {
           </span>
         </Link>
 
-        <div className="flex items-center gap-1.5 md:gap-2">
+        <motion.div className="flex items-center gap-1.5 md:gap-2">
           <NavIconButton
             ariaLabel="Search"
             className="hidden md:flex"
@@ -208,12 +354,14 @@ export default function Navbar() {
             </svg>
           </NavIconButton>
 
-          <div ref={notifWrapRef} style={{ position: "relative" }}>
+          {/* Notifications bell + dropdown */}
+          <motion.div ref={notifWrapRef} style={{ position: "relative" }}>
             <NavIconButton
               ariaLabel="Notifications"
               onClick={() => {
                 setNotifOpen((v) => !v);
                 setSearchOpen(false);
+                if (!notifOpen) fetchNotifications();
               }}
               style={{ position: "relative" }}
             >
@@ -221,19 +369,30 @@ export default function Navbar() {
                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
                 <path d="M13.73 21a2 2 0 0 1-3.46 0" />
               </svg>
-              {hasUnread ? (
+              {unreadCount > 0 ? (
                 <span
                   aria-hidden
                   style={{
                     position: "absolute",
-                    top: 4,
-                    right: 4,
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
+                    top: 0,
+                    right: 0,
+                    minWidth: badgeLabel ? 14 : 8,
+                    height: badgeLabel ? 14 : 8,
+                    padding: badgeLabel ? "0 3px" : 0,
+                    borderRadius: badgeLabel ? 8 : "50%",
                     background: "var(--exam-urgent)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: badgeLabel ? 9 : 0,
+                    fontWeight: 600,
+                    color: "var(--text-emphasis)",
+                    lineHeight: 1,
                   }}
-                />
+                >
+                  {badgeLabel || ""}
+                </span>
               ) : null}
             </NavIconButton>
 
@@ -255,38 +414,133 @@ export default function Navbar() {
                     boxShadow: "0 8px 32px var(--chat-panel-shadow)",
                     zIndex: 150,
                     overflow: "hidden",
+                    maxHeight: "400px",
+                    overflowY: "auto",
                   }}
                 >
-                  <div
+                  {/* Dropdown header */}
+                  <motion.div
                     style={{
                       padding: "14px 16px",
                       borderBottom: "0.5px solid var(--border-light)",
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center",
+                      gap: 8,
                     }}
                   >
-                    <span style={{ fontFamily: "'Playfair Display', serif", fontSize: "14px", color: "var(--text)", fontWeight: 700 }}>
-                      Notifications
-                    </span>
-                    <button
-                      type="button"
-                      onClick={markAllRead}
+                    <motion.span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span
+                        style={{
+                          fontFamily: "'Playfair Display', serif",
+                          fontSize: "14px",
+                          color: "var(--text)",
+                          fontWeight: 700,
+                        }}
+                      >
+                        Notifications
+                      </span>
+                      {unreadCount > 0 ? (
+                        <span
+                          style={{
+                            background: "var(--gold-dim)",
+                            border: "0.5px solid var(--gold-border)",
+                            borderRadius: "10px",
+                            padding: "2px 8px",
+                            fontFamily: "Inter, sans-serif",
+                            fontSize: "10px",
+                            color: "var(--gold)",
+                          }}
+                        >
+                          {unreadCount} unread
+                        </span>
+                      ) : null}
+                    </motion.span>
+                    {unreadCount > 0 ? (
+                      <button
+                        type="button"
+                        onClick={markAllRead}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          fontFamily: "Inter, sans-serif",
+                          fontSize: "11px",
+                          color: "var(--gold)",
+                          cursor: "pointer",
+                          flexShrink: 0,
+                        }}
+                      >
+                        Mark all read
+                      </button>
+                    ) : null}
+                  </motion.div>
+
+                  {/* Loading skeleton rows */}
+                  {notifLoading && notifications.length === 0 ? (
+                    <>
+                      {[0, 1, 2].map((i) => (
+                        <motion.div
+                          key={`skel-${i}`}
+                          className="animate-pulse"
+                          style={{
+                            margin: "8px 16px",
+                            background: "var(--card-hover)",
+                            height: 48,
+                            borderRadius: 6,
+                          }}
+                        />
+                      ))}
+                    </>
+                  ) : null}
+
+                  {/* Empty state */}
+                  {!notifLoading && notifications.length === 0 ? (
+                    <motion.div
                       style={{
-                        background: "none",
-                        border: "none",
-                        fontFamily: "Inter, sans-serif",
-                        fontSize: "11px",
-                        color: "var(--gold)",
-                        cursor: "pointer",
+                        padding: "32px 16px",
+                        textAlign: "center",
                       }}
                     >
-                      Mark all read
-                    </button>
-                  </div>
+                      <svg
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="var(--gold-icon)"
+                        strokeWidth="2"
+                        style={{ margin: "0 auto 12px", display: "block" }}
+                        aria-hidden
+                      >
+                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                        <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                      </svg>
+                      <p
+                        style={{
+                          fontFamily: "Inter, sans-serif",
+                          fontSize: "13px",
+                          color: "var(--text-muted)",
+                          margin: 0,
+                        }}
+                      >
+                        No notifications yet
+                      </p>
+                      <p
+                        style={{
+                          fontFamily: "Inter, sans-serif",
+                          fontSize: "11px",
+                          color: "var(--text-extra-dim)",
+                          marginTop: "4px",
+                          marginBottom: 0,
+                        }}
+                      >
+                        They will appear here when something happens
+                      </p>
+                    </motion.div>
+                  ) : null}
 
+                  {/* Notification rows */}
                   {notifications.map((n, idx) => {
-                    const Icon = n.Icon;
+                    const unread = !n.is_read;
                     return (
                       <button
                         key={n.id}
@@ -294,33 +548,40 @@ export default function Navbar() {
                         style={{
                           width: "100%",
                           padding: "12px 16px",
-                          borderBottom: idx < notifications.length - 1 ? "0.5px solid var(--border)" : "none",
+                          borderBottom:
+                            idx < notifications.length - 1
+                              ? "0.5px solid var(--border)"
+                              : "none",
                           display: "flex",
                           gap: "12px",
                           alignItems: "flex-start",
                           cursor: "pointer",
-                          background: n.unread ? "var(--nav-icon-bg)" : "transparent",
+                          background: unread ? "var(--nav-icon-bg)" : "transparent",
                           border: "none",
                           textAlign: "left",
                           transition: "background 150ms",
                         }}
                         className="notif-row"
-                        onClick={() => setNotifOpen(false)}
+                        onClick={() => handleNotificationClick(n)}
                       >
                         <span
                           style={{
                             width: "32px",
                             height: "32px",
                             borderRadius: "50%",
-                            background: n.unread ? "var(--nav-icon-hover-bg)" : "var(--card-hover)",
-                            border: n.unread ? "0.5px solid var(--gold-border)" : "0.5px solid var(--border)",
+                            background: unread
+                              ? "var(--nav-icon-hover-bg)"
+                              : "var(--card-hover)",
+                            border: unread
+                              ? "0.5px solid var(--gold-border)"
+                              : "0.5px solid var(--border)",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
                             flexShrink: 0,
                           }}
                         >
-                          <Icon size={16} color={n.unread ? "var(--gold)" : "var(--text-muted)"} aria-hidden />
+                          <NotificationTypeIcon type={n.type} />
                         </span>
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <span
@@ -328,20 +589,36 @@ export default function Navbar() {
                               fontFamily: "Inter, sans-serif",
                               fontSize: "13px",
                               fontWeight: 500,
-                              color: n.unread ? "var(--text)" : "var(--text-dim)",
+                              color: unread ? "var(--text)" : "var(--text-dim)",
                               display: "block",
                             }}
                           >
                             {n.title}
                           </span>
-                          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "12px", color: "var(--text-muted)", marginTop: "2px", display: "block" }}>
-                            {n.desc}
+                          <span
+                            style={{
+                              fontFamily: "Inter, sans-serif",
+                              fontSize: "12px",
+                              color: "var(--text-muted)",
+                              marginTop: "2px",
+                              display: "block",
+                            }}
+                          >
+                            {n.message}
                           </span>
-                          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--text-extra-dim)", marginTop: "4px", display: "block" }}>
-                            {n.time}
+                          <span
+                            style={{
+                              fontFamily: "Inter, sans-serif",
+                              fontSize: "10px",
+                              color: "var(--text-extra-dim)",
+                              marginTop: "4px",
+                              display: "block",
+                            }}
+                          >
+                            {n.created_at}
                           </span>
                         </span>
-                        {n.unread ? (
+                        {unread ? (
                           <span
                             aria-hidden
                             style={{
@@ -360,7 +637,7 @@ export default function Navbar() {
                 </motion.div>
               ) : null}
             </AnimatePresence>
-          </div>
+          </motion.div>
 
           <NavIconButton
             ariaLabel={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
@@ -375,7 +652,7 @@ export default function Navbar() {
             {theme === "dark" ? <span aria-hidden>☀</span> : <span aria-hidden>☾</span>}
           </NavIconButton>
 
-          <div ref={profileRef} style={{ position: "relative", display: "inline-flex" }}>
+          <motion.div ref={profileRef} style={{ position: "relative", display: "inline-flex" }}>
             <NavIconButton
               ariaLabel="Profile menu"
               onClick={() => setProfileOpen((prev) => !prev)}
@@ -406,7 +683,7 @@ export default function Navbar() {
                     overflow: "hidden",
                   }}
                 >
-                  <div
+                  <motion.div
                     style={{
                       padding: "14px 16px",
                       borderBottom: "0.5px solid var(--border-light)",
@@ -433,18 +710,18 @@ export default function Navbar() {
                     >
                       {user?.email || ""}
                     </p>
-                  </div>
+                  </motion.div>
 
-                  <div
+                  <motion.div
                     role="button"
                     tabIndex={0}
                     onClick={() => {
-                      router.push("/dashboard");
+                      router.push("/profile");
                       setProfileOpen(false);
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
-                        router.push("/dashboard");
+                        router.push("/profile");
                         setProfileOpen(false);
                       }
                     }}
@@ -466,9 +743,9 @@ export default function Navbar() {
                       <circle cx="12" cy="7" r="4" />
                     </svg>
                     My Profile
-                  </div>
+                  </motion.div>
 
-                  <div
+                  <motion.div
                     role="button"
                     tabIndex={0}
                     onClick={() => {
@@ -499,11 +776,11 @@ export default function Navbar() {
                       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                     </svg>
                     Settings
-                  </div>
+                  </motion.div>
 
-                  <div style={{ height: "0.5px", background: "var(--border)", margin: "4px 0" }} />
+                  <motion.div style={{ height: "0.5px", background: "var(--border)", margin: "4px 0" }} />
 
-                  <div
+                  <motion.div
                     role="button"
                     tabIndex={0}
                     onClick={handleProfileClick}
@@ -526,12 +803,12 @@ export default function Navbar() {
                       <line x1="21" y1="12" x2="9" y2="12" />
                     </svg>
                     Sign Out
-                  </div>
+                  </motion.div>
                 </motion.div>
               ) : null}
             </AnimatePresence>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       </motion.nav>
 
       <style>{`

@@ -162,16 +162,18 @@ async function ensureProfileExists(authUser) {
   if (!authUser?.id || !authUser?.email) return;
 
   try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData?.session?.access_token;
-    if (!token) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session || !session.access_token) {
+      console.log("[Dashboard] No session yet — skipping profile check");
+      return;
+    }
 
     const checkUrl =
       `${API_URL}/onboarding/profile/check` +
       `?user_id=${encodeURIComponent(authUser.id)}`;
     const checkRes = await fetch(checkUrl, {
       method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${session.access_token}` },
     });
 
     if (!checkRes.ok) {
@@ -193,7 +195,7 @@ async function ensureProfileExists(authUser) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({
         user_id: authUser.id,
@@ -350,11 +352,15 @@ function subjectLabelFromKey(subjectKey) {
 }
 
 /** GET /analytics/exam-intelligence — returns [] on failure for fallback UI */
-async function fetchExamIntelligence(token) {
+async function fetchExamIntelligence(session) {
+  if (!session || !session.access_token) {
+    console.log("[Dashboard] No session — skipping exam intelligence");
+    return [];
+  }
   try {
     const res = await fetch(`${API_URL}/analytics/exam-intelligence`, {
       method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${session.access_token}` },
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -551,6 +557,9 @@ export default function DashboardPage() {
   // user â€” Supabase auth user after verification
   const [user, setUser] = useState(null);
 
+  // session — Supabase session; loaded first in init so API calls use access_token
+  const [session, setSession] = useState(null);
+
   // checkedSessions â€” session id â†’ completed (checkbox UI + PATCH sync)
   const [checkedSessions, setCheckedSessions] = useState({});
 
@@ -609,18 +618,23 @@ export default function DashboardPage() {
   // timetable/notes/homework, then render the mockup layout.
   useEffect(() => {
     const init = async () => {
-      const {
-        data: { user: authUser },
-        error,
-      } = await supabase.auth.getUser();
+      const { data: { session } } = await supabase.auth.getSession();
 
-      if (error || !authUser) {
+      if (!session) {
+        router.replace("/login");
+        return;
+      }
+
+      setSession(session);
+
+      const authUser = session.user;
+      if (!authUser?.id) {
         router.replace("/login");
         return;
       }
 
       setUser(authUser);
-      ensureProfileExists(authUser);
+      await ensureProfileExists(authUser);
 
       if (localStorage.getItem(ONBOARDING_KEY) !== "true") {
         router.replace("/onboarding/welcome");
@@ -646,12 +660,11 @@ export default function DashboardPage() {
       }
       setExamDates(mergedExams);
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token ?? null;
+      const token = session.access_token;
 
       // Exam intelligence — enhances countdown; empty array keeps simple fallback
       if (token) {
-        const intelRows = await fetchExamIntelligence(token);
+        const intelRows = await fetchExamIntelligence(session);
         setExamIntelligence(intelRows);
         if (intelRows.length > 0) {
           setExamDates((prev) => {

@@ -40,7 +40,7 @@ from contextlib import asynccontextmanager
 # Each feature lives in its own router file under routers/.
 # Importing the module here gives us `homework.router`, which we
 # then bolt onto the FastAPI app below via include_router(...).
-from routers import homework, flashcards, quiz, timetable, onboarding, past_papers, notes, auth, chat, analytics, syllabus  # noqa: F401 — registered below
+from routers import homework, flashcards, quiz, timetable, onboarding, past_papers, notes, auth, chat, analytics, syllabus, notifications  # noqa: F401 — registered below
 from routers.reminders import router as reminders_router
 
 # ============================================================
@@ -241,6 +241,13 @@ app.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
 app.include_router(syllabus.router, prefix="/syllabus", tags=["Syllabus"])
 
 app.include_router(reminders_router, prefix="/reminders", tags=["Reminders"])
+
+# In-app notification bell — list, mark read, mark all read.
+app.include_router(
+    notifications.router,
+    prefix="/notifications",
+    tags=["Notifications"],
+)
 
 # Google Classroom read API — lives in notes.py but mounted at
 # /classroom so n8n and /docs show GET /classroom/posts.

@@ -89,6 +89,7 @@ from pydantic import BaseModel, Field
 #   2. We use supabase.auth.get_user(jwt) to verify any user's
 #      access token (the anon client cannot do that).
 from database import supabase
+from routers.notifications import create_notification
 
 
 # ============================================================
@@ -139,43 +140,96 @@ MIN_CARD_TEXT_LENGTH = 3
 # _parse_groq_cards(). Any deviation (markdown fences, preamble,
 # trailing commentary) is tolerated by the parser.
 # ============================================================
-SYSTEM_PROMPT = (
-    "You are an expert Cambridge AS Level examiner creating revision "
-    "flashcards for a student in Zambia, Southern Africa.\n"
-    "\n"
-    "You will receive a study note. Generate exactly 6 to 8 flashcard "
-    "question and answer pairs from it.\n"
-    "\n"
-    "Rules for questions:\n"
-    "- Each question must test one specific Cambridge AS Level concept\n"
-    "- Questions must be clear and unambiguous\n"
-    "- Mix question types: definition questions, application questions, "
-    "analysis questions, calculation questions where relevant\n"
-    "- Questions must be answerable from the note content only\n"
-    "\n"
-    "Rules for answers:\n"
-    "- Each answer must be precise and Cambridge mark-scheme ready\n"
-    "- Answers should be 1-3 sentences maximum\n"
-    "- Use Cambridge terminology throughout\n"
-    "- No markdown symbols, no bullet points within answers\n"
-    "- Write in plain sentences only\n"
-    "\n"
-    "Return your response as a JSON array only.\n"
-    "No introduction. No explanation. No markdown. Just the JSON array.\n"
-    "Format exactly like this:\n"
-    "[\n"
-    "  {\n"
-    '    "front": "question text here",\n'
-    '    "back": "answer text here"\n'
-    "  },\n"
-    "  {\n"
-    '    "front": "second question here",\n'
-    '    "back": "second answer here"\n'
-    "  }\n"
-    "]\n"
-    "If you cannot generate cards from this note return an empty "
-    "array: []"
-)
+SYSTEM_PROMPT = """
+You are an expert Cambridge AS Level revision specialist.
+You create flashcards that help students score Band 4.
+
+THE STUDENT: Aisha, Cambridge AS Level, Lusaka Zambia.
+
+You will receive a study note. Generate exactly 6 to 8 flashcard
+question and answer pairs from it.
+
+FLASHCARD QUALITY RULES:
+- Every front (question) must be specific and testable
+- Every back (answer) must be precise and complete
+- Use Cambridge mark scheme language in every answer
+- Include ceteris paribus where relevant
+- Include a real Zambian/African example in at least
+  30% of cards where genuinely relevant
+- Never create vague or generic cards
+- Every card must directly help in an exam
+- Questions must be answerable from the note content only
+
+CARD TYPES TO INCLUDE:
+1. Definition cards — precise Cambridge definitions
+2. Concept cards — explain a concept in 2-3 sentences
+3. Application cards — apply concept to a real example
+4. Analysis cards — chain of reasoning questions
+5. Formula cards — for calculations and diagrams
+
+FORMAT — return valid JSON array only:
+[
+  {
+    "front": "Define price elasticity of demand",
+    "back": "PED measures the responsiveness of quantity
+    demanded to a change in price, ceteris paribus.
+    Formula: % change in Qd ÷ % change in P.
+    PED > 1 = elastic, PED < 1 = inelastic."
+  }
+]
+
+No markdown. No explanation. JSON only.
+If you cannot generate cards from this note return an empty array: []
+
+WRITING STYLE RULES:
+Sound like a real person wrote this:
+- Vary sentence length — mix short punchy sentences
+  with longer explanatory ones
+- Use natural transitions: "Here's the thing...",
+  "Think of it this way...", "The key point is...",
+  "What Cambridge really wants to see is..."
+- Occasional light emphasis words: "actually", "really",
+  "in fact", "the truth is"
+- Never start two consecutive sentences the same way
+- Never use lists unless absolutely necessary
+- Flow like spoken explanation, not bullet points
+
+AVOID THESE AI GIVEAWAYS — never use:
+- "Certainly!" — never use
+- "Of course!" — never use
+- "Great question!" — never use
+- "It is important to note that" — never use
+- "In conclusion" — never use
+- "Furthermore" — never use
+- "Moreover" — never use
+- "It is worth noting" — never use
+- "As mentioned above" — never use
+- "In summary" — never use
+- Numbered lists for explanations — never use
+- Bullet points in flowing text — never use
+- Starting every paragraph with the topic word
+- Repeating the question back before answering
+- Overly formal academic language when simpler works
+
+WHAT TO USE INSTEAD:
+- "Here's what this means in practice..."
+- "The way to think about this is..."
+- "What actually happens is..."
+- "Cambridge examiners look for exactly this..."
+- "The reason this matters is..."
+- "Most students miss this, but..."
+- "Think about it from the examiner's perspective..."
+
+HUMANISATION RULES:
+Flashcard fronts should feel like questions a real
+tutor would ask in a revision session.
+Flashcard backs should feel like a tutor giving
+a quick clear explanation — not a textbook definition.
+Include the formula or key phrase that makes it click.
+One sentence that gives the core idea, one that
+applies it, one that connects to Cambridge marking.
+Never sound like copy-pasted from a textbook.
+"""
 
 
 # ============================================================
@@ -782,8 +836,35 @@ def generate_flashcards(
             )
             continue
 
-    # ── STEP 8: respond. ────────────────────────────────────
+    # ── STEP 8: notify student when cards were saved. ─────────
     saved_count = len(saved_cards)
+    if saved_count > 0:
+        subject_label = note_title or "your note"
+        if note_subject_id:
+            try:
+                subj_result = (
+                    supabase.table("subjects")
+                    .select("name")
+                    .eq("id", note_subject_id)
+                    .limit(1)
+                    .execute()
+                )
+                subj_rows = getattr(subj_result, "data", None) or []
+                if subj_rows and subj_rows[0].get("name"):
+                    subject_label = str(subj_rows[0]["name"]).strip()
+            except Exception as e:
+                print(f"[Flashcards] Subject name lookup failed: {e}")
+        create_notification(
+            user_id=verified_user_id,
+            type="flashcards",
+            title=f"{saved_count} Flashcards Created",
+            message=(
+                f"New revision cards generated for {subject_label}. "
+                "Head to Flashcards to start studying."
+            ),
+        )
+
+    # ── STEP 9: respond. ────────────────────────────────────
     message = (
         f"{saved_count} cards generated successfully"
         if saved_count > 0

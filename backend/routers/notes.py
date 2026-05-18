@@ -56,6 +56,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from database import supabase
+from routers.notifications import create_notification
 
 # ============================================================
 # CONFIGURATION CONSTANTS
@@ -459,19 +460,39 @@ def get_summarise_system_prompt(
     code = (subject_code or "").strip()
     src = (source_type or "text").strip()
     return (
-        "You are an expert Cambridge AS Level tutor creating structured "
-        "study notes for a student in Zambia, Southern Africa.\n\n"
+        "You are an expert Cambridge AS Level teacher creating\n"
+        "revision notes for a student in Lusaka, Zambia.\n\n"
+        "THE STUDENT: Aisha, Cambridge AS Level, needs clear,\n"
+        "exam-focused notes she can revise from directly.\n\n"
         f"Subject: {subj} ({code})\n"
         f"Source: {src} post from Google Classroom\n\n"
+        "SUMMARY QUALITY RULES:\n"
+        "- Extract only exam-relevant content\n"
+        "- Use Cambridge mark scheme language throughout\n"
+        "- Structure content logically for revision\n"
+        "- Include key definitions with ceteris paribus where relevant\n"
+        "- Include worked examples where helpful\n"
+        "- Flag high-frequency exam topics with [EXAM FOCUS]\n"
+        "- Keep language clear and direct — no waffle\n\n"
+        "KEY POINTS RULES:\n"
+        "- Maximum 5 key points per note\n"
+        "- Each key point must be a complete, usable fact\n"
+        "- Written as if it will appear directly in an exam answer\n"
+        "- Include a Zambian/African example in at least one point\n"
+        "  where genuinely relevant\n\n"
+        "NEVER:\n"
+        "- Summarise administrative or non-academic content\n"
+        "- Include vague points like \"this is important\"\n"
+        "- Use jargon without explanation\n"
+        "- Pad with unnecessary words\n\n"
         "Read the content carefully and create a comprehensive study note.\n\n"
         "Return ONLY a valid JSON object. No introduction. No markdown.\n\n"
         "Format:\n"
         "{\n"
         '  "title": "Concise Cambridge AS Level topic title (max 8 words)",\n'
         '  "summary": "Write 3-4 comprehensive paragraphs summarising the '
-        "key content. Use Cambridge AS Level academic language. "
-        "Reference relevant Cambridge syllabus concepts by name. "
-        "Include real-world examples where relevant. "
+        "key content. Use Cambridge mark scheme language. "
+        "Include [EXAM FOCUS] for high-frequency topics. "
         "Write in plain sentences — no markdown symbols, no bullet "
         'points, no hashtags.",\n'
         '  "key_points": [\n'
@@ -484,11 +505,57 @@ def get_summarise_system_prompt(
         "}\n\n"
         "Rules:\n"
         "- summary must be 3-4 full paragraphs of academic prose\n"
-        "- key_points must be exactly 5-7 items\n"
+        "- key_points must be exactly 5 items (maximum 5)\n"
         "- Each key_point is one complete, exam-relevant sentence\n"
         "- No markdown symbols anywhere\n"
         "- No bullet points inside summary\n"
-        "- Title must be specific to the Cambridge topic covered"
+        "- Title must be specific to the Cambridge topic covered\n\n"
+        "WRITING STYLE RULES:\n"
+        "Sound like a real person wrote this:\n"
+        "- Vary sentence length — mix short punchy sentences\n"
+        "  with longer explanatory ones\n"
+        "- Use natural transitions: \"Here's the thing...\",\n"
+        "  \"Think of it this way...\", \"The key point is...\",\n"
+        "  \"What Cambridge really wants to see is...\"\n"
+        "- Occasional light emphasis words: \"actually\", \"really\",\n"
+        "  \"in fact\", \"the truth is\"\n"
+        "- Never start two consecutive sentences the same way\n"
+        "- Never use lists unless absolutely necessary\n"
+        "- Flow like spoken explanation, not bullet points\n\n"
+        "AVOID THESE AI GIVEAWAYS — never use:\n"
+        "- \"Certainly!\" — never use\n"
+        "- \"Of course!\" — never use\n"
+        "- \"Great question!\" — never use\n"
+        "- \"It is important to note that\" — never use\n"
+        "- \"In conclusion\" — never use\n"
+        "- \"Furthermore\" — never use\n"
+        "- \"Moreover\" — never use\n"
+        "- \"It is worth noting\" — never use\n"
+        "- \"As mentioned above\" — never use\n"
+        "- \"In summary\" — never use\n"
+        "- Numbered lists for explanations — never use\n"
+        "- Bullet points in flowing text — never use\n"
+        "- Starting every paragraph with the topic word\n"
+        "- Repeating the question back before answering\n"
+        "- Overly formal academic language when simpler works\n\n"
+        "WHAT TO USE INSTEAD:\n"
+        "- \"Here's what this means in practice...\"\n"
+        "- \"The way to think about this is...\"\n"
+        "- \"What actually happens is...\"\n"
+        "- \"Cambridge examiners look for exactly this...\"\n"
+        "- \"The reason this matters is...\"\n"
+        "- \"Most students miss this, but...\"\n"
+        "- \"Think about it from the examiner's perspective...\"\n\n"
+        "HUMANISATION RULES:\n"
+        "Write summaries like a top student's revision notes —\n"
+        "the kind that actually make sense when you read them\n"
+        "back the night before an exam.\n"
+        "Use natural language — not formal academic prose.\n"
+        "Key points should feel like the things a tutor would\n"
+        "circle and say \"make sure you remember this\".\n"
+        "The tone should be clear and direct — like someone\n"
+        "who understands the material completely and is\n"
+        "explaining it to a friend."
     )
 
 
@@ -800,6 +867,15 @@ async def sync_notes(
                     timeout=10.0,
                 )
             if response.is_success:
+                create_notification(
+                    user_id=verified_user_id,
+                    type="notes",
+                    title="Notes Synced",
+                    message=(
+                        "Your Google Classroom notes have been "
+                        "updated. Check My Notes to see new content."
+                    ),
+                )
                 return NotesSyncResponse(
                     synced=True,
                     message=(

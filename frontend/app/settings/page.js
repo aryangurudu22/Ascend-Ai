@@ -521,71 +521,7 @@ export default function SettingsPage() {
         </p>
       </header>
 
-      {/* SECTION 1 — Profile */}
-      <SettingsSection title="Profile">
-        <SettingsRow
-          name="Full Name"
-          description="Your display name in the app"
-        >
-          <input
-            type="text"
-            readOnly
-            value={fullName}
-            style={inputStyle}
-            onFocus={focusInput}
-            onBlur={blurInput}
-          />
-        </SettingsRow>
-        <SettingsRow
-          name="Email Address"
-          description="Your Google account email"
-        >
-          <input
-            type="email"
-            readOnly
-            value={accountEmail}
-            style={inputStyle}
-            onFocus={focusInput}
-            onBlur={blurInput}
-          />
-        </SettingsRow>
-        <SettingsRow name="Account Type" description="Your current plan">
-          <span
-            style={{
-              background: "var(--gold-dim)",
-              border: "0.5px solid var(--gold-dim)",
-              borderRadius: 4,
-              padding: "4px 12px",
-              fontFamily: "Inter, sans-serif",
-              fontSize: 12,
-              color: "var(--gold)",
-            }}
-          >
-            Free Plan
-          </span>
-        </SettingsRow>
-        <SettingsRow name="Sign Out" description="Sign out of your account" isLast>
-          <button
-            type="button"
-            className="settings-danger-btn"
-            onClick={handleSignOut}
-            style={{
-              background: "transparent",
-              border: "0.5px solid color-mix(in srgb, var(--exam-urgent) 40%, transparent)",
-              borderRadius: 6,
-              padding: "6px 16px",
-              fontFamily: "Inter, sans-serif",
-              fontSize: 12,
-              color: "var(--exam-urgent)",
-              cursor: "pointer",
-            }}
-          >
-            Sign Out
-          </button>
-        </SettingsRow>
-      </SettingsSection>
-
-      {/* SECTION 2 — Appearance */}
+      {/* SECTION 1 — Appearance */}
       <SettingsSection title="Appearance">
         <SettingsRow
           name="Theme"
@@ -631,7 +567,7 @@ export default function SettingsPage() {
         </SettingsRow>
       </SettingsSection>
 
-      {/* SECTION 3 — Study preferences */}
+      {/* SECTION 2 — Study preferences */}
       <SettingsSection title="Study Preferences">
         <SettingsRow
           name="Study Start"
@@ -692,7 +628,7 @@ export default function SettingsPage() {
         </SettingsRow>
       </SettingsSection>
 
-      {/* SECTION 4 — Email reminders */}
+      {/* SECTION 3 — Email reminders */}
       <SettingsSection
         title="Email Reminders"
         footer={
@@ -814,7 +750,7 @@ export default function SettingsPage() {
         </SettingsRow>
       </SettingsSection>
 
-      {/* SECTION 5 — Data and privacy */}
+      {/* SECTION 4 — Data and privacy */}
       <SettingsSection title="Data and Privacy">
         <SettingsRow
           name="Syllabus Data"
@@ -882,7 +818,6 @@ export default function SettingsPage() {
         <SettingsRow
           name="Essay Check History"
           description="Your saved essay analyses"
-          isLast
         >
           <button
             type="button"
@@ -898,6 +833,40 @@ export default function SettingsPage() {
             }}
           >
             View History →
+          </button>
+        </SettingsRow>
+
+        {/* Divider before sign out */}
+        <div
+          role="presentation"
+          style={{
+            height: "0.5px",
+            background: "var(--border)",
+            margin: "4px 0",
+          }}
+        />
+
+        <SettingsRow
+          name="Sign Out"
+          description="Sign out of your AscendAI account"
+          isLast
+        >
+          <button
+            type="button"
+            className="settings-danger-btn"
+            onClick={handleSignOut}
+            style={{
+              background: "transparent",
+              border: "0.5px solid color-mix(in srgb, var(--exam-urgent) 40%, transparent)",
+              borderRadius: 6,
+              padding: "6px 16px",
+              fontFamily: "Inter, sans-serif",
+              fontSize: 12,
+              color: "var(--exam-urgent)",
+              cursor: "pointer",
+            }}
+          >
+            Sign Out
           </button>
         </SettingsRow>
       </SettingsSection>

@@ -111,6 +111,7 @@ from pydantic import BaseModel, Field
 #   2. supabase.auth.get_user(jwt) (inside verify_bearer_token)
 #      needs the admin client.
 from database import supabase
+from routers.notifications import create_notification
 
 
 # ============================================================
@@ -1198,7 +1199,19 @@ def _generate_timetable_for_user(
             )
             continue
 
-    # ── STEP 13: respond. ───────────────────────────────────
+    # ── STEP 13: notify student when generation succeeded. ───
+    if saved_count > 0:
+        create_notification(
+            user_id=user_id,
+            type="timetable",
+            title="Timetable Generated",
+            message=(
+                "Your 2-week study plan is ready. "
+                "Check your timetable to see your sessions."
+            ),
+        )
+
+    # ── STEP 14: respond. ───────────────────────────────────
     return TimetableGenerateResponse(
         message=(
             "Timetable generated successfully"

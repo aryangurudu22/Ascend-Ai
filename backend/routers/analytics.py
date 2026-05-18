@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
 from database import supabase
+from routers.notifications import create_notification, exam_alert_sent_today
 
 # Table names — single place to update if schema renames.
 HOMEWORK_TABLE = "homework_questions"
@@ -40,6 +41,14 @@ SUBJECT_CODE_TO_KEY: Dict[str, str] = {
 
 # Canonical subject keys returned to the frontend.
 SUBJECT_KEYS = ("economics", "business", "english", "ict")
+
+# Display names for in-app exam alert notifications.
+SUBJECT_KEY_TO_LABEL: Dict[str, str] = {
+    "economics": "Economics",
+    "business": "Business Studies",
+    "english": "English Language",
+    "ict": "ICT",
+}
 
 # Allowed period query values.
 ALLOWED_PERIODS = ("week", "month", "all")
@@ -1048,6 +1057,22 @@ def analytics_exam_intelligence(
                 smart_message=message,
             )
         )
+
+        # Critical urgency — one exam alert notification per subject per day.
+        if urgency == "critical":
+            subject_label = SUBJECT_KEY_TO_LABEL.get(
+                subject_key, subject_key.replace("_", " ").title()
+            )
+            if not exam_alert_sent_today(verified_user_id, subject_label):
+                create_notification(
+                    user_id=verified_user_id,
+                    type="exam_alert",
+                    title=f"Exam Alert — {subject_label}",
+                    message=(
+                        f"{subject_label} exam in {days_remaining} days. "
+                        f"Only {coverage_percentage}% of syllabus covered."
+                    ),
+                )
 
     # Soonest exams first so the dashboard highlights the nearest deadline.
     subjects_out.sort(key=lambda s: s.days_remaining)
