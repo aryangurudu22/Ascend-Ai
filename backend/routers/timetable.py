@@ -90,6 +90,7 @@
 from datetime import date, datetime, time, timedelta, timezone
 import json
 import re
+import time
 from typing import Any, Dict, List, Optional
 
 # ── FastAPI imports ──────────────────────────────────────────
@@ -698,6 +699,52 @@ def _parse_groq_entries(raw: str) -> "tuple[List[Dict[str, Any]], bool]":
 
 
 # ============================================================
+# HELPER: _redistribute_empty_plan_days
+# ============================================================
+# After Groq returns entries, move one session from any day with
+# 3+ sessions onto each empty day inside the plan window. Total
+# session count is unchanged — only dates are updated.
+# ============================================================
+def _redistribute_empty_plan_days(
+    entries: List[Dict[str, Any]],
+    plan_start: date,
+    plan_end: date,
+) -> List[Dict[str, Any]]:
+    if not entries:
+        return entries
+
+    plan_dates: List[str] = []
+    cursor = plan_start
+    while cursor <= plan_end:
+        plan_dates.append(cursor.isoformat())
+        cursor += timedelta(days=1)
+
+    by_date: Dict[str, List[int]] = {d: [] for d in plan_dates}
+    for idx, entry in enumerate(entries):
+        raw = str(entry.get("date") or "").strip()[:10]
+        try:
+            entry_d = date.fromisoformat(raw)
+        except ValueError:
+            continue
+        iso = entry_d.isoformat()
+        if iso in by_date:
+            by_date[iso].append(idx)
+
+    while True:
+        empty_days = [d for d in plan_dates if len(by_date[d]) == 0]
+        heavy_days = [d for d in plan_dates if len(by_date[d]) >= 3]
+        if not empty_days or not heavy_days:
+            break
+        target_day = empty_days[0]
+        donor_day = max(heavy_days, key=lambda d: len(by_date[d]))
+        moved_idx = by_date[donor_day].pop()
+        entries[moved_idx]["date"] = target_day
+        by_date[target_day].append(moved_idx)
+
+    return entries
+
+
+# ============================================================
 # HELPER: _apply_exam_date_overrides — merge profile dates onto subjects
 # ============================================================
 def _apply_exam_date_overrides(
@@ -861,30 +908,30 @@ def _generate_timetable_for_user(
     study_start = _parse_hh_mm(profile.get("study_start_time"), DEFAULT_STUDY_START)
     study_end = _parse_hh_mm(profile.get("study_end_time"), DEFAULT_STUDY_END)
 
-    # ── STEP 3: fetch all active subjects ───────────────────
-    # `subjects` is shared across the (single) tenant today —
-    # there is no user_id column to filter on. We just read every
-    # active row (is_active = true) so a hidden subject (e.g.
-    # one we paused mid-term) is left out.
-    try:
-        subjects_result = (
-            supabase
-            .table(SUBJECTS_TABLE)
-            .select("id, name, code, exam_date")
-            .eq("is_active", True)
-            # Most urgent (soonest exam) first. Rows with a NULL
-            # exam_date sort LAST under PostgREST's default
-            # NULLS LAST behaviour, which is exactly what we want.
-            .order("exam_date", desc=False)
-            .execute()
-        )
-        subjects = getattr(subjects_result, "data", None) or []
-    except Exception as e:
-        print(f"[Timetable] Subjects read failed: {type(e).__name__}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "Database error. Please try again."},
-        )
+    # ── STEP 3: fetch active subjects for this student ──────
+    subjects = []
+    for attempt in range(3):
+        try:
+            subjects_result = (
+                supabase
+                .table(SUBJECTS_TABLE)
+                .select("*")
+                .eq("user_id", user_id)
+                .eq("is_active", True)
+                .order("exam_date", desc=False)
+                .execute()
+            )
+            subjects = getattr(subjects_result, "data", None) or []
+            break
+        except Exception as e:
+            if attempt == 2:
+                print(f"[Timetable] Subjects read failed: {type(e).__name__}: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail={"error": "Database error. Please try again."},
+                )
+            print(f"[Timetable] subjects retry {attempt + 1}")
+            time.sleep(1)
 
     if not subjects:
         # 404 — the prerequisite is missing.
@@ -1023,6 +1070,18 @@ def _generate_timetable_for_user(
         "8. Each session must have a specific Cambridge topic as its title\n"
         "   Use real Cambridge AS Level topics for each subject\n"
         "\n"
+        "CRITICAL SCHEDULING RULES:\n"
+        "- Spread sessions EVENLY across all 14 days\n"
+        "- Every day must have at least 1 session\n"
+        "- Maximum 3 sessions per day\n"
+        "- No day should be left empty\n"
+        "- Distribute subjects evenly — do not cluster same subject\n"
+        "  on consecutive days\n"
+        "- Alternate subjects throughout the week for better retention\n"
+        "- Saturday and Sunday can have 1-2 sessions maximum\n"
+        "  to allow for rest\n"
+        "- Monday to Friday should have 2-3 sessions each\n"
+        "\n"
         "Return ONLY a JSON array. No introduction. No explanation.\n"
         "Each entry must follow this exact format:\n"
         "[\n"
@@ -1112,6 +1171,9 @@ def _generate_timetable_for_user(
             weeks_covered=PLAN_WINDOW_DAYS // 7,
             date_range={"start": today_iso, "end": window_end_iso},
         )
+
+    # ── STEP 10b: fill empty days by moving sessions from heavy days ──
+    entries_raw = _redistribute_empty_plan_days(entries_raw, today, window_end)
 
     # ── STEP 11: resolve subject_code → subject_id ──────────
     # subject_code is the most reliable join key (Cambridge codes
@@ -1493,9 +1555,10 @@ def toggle_complete(
             .eq("user_id", verified_user_id)
             .execute()
         )
+        print(f"[Timetable] complete result: {update_result}")
         updated_rows = getattr(update_result, "data", None) or []
     except Exception as e:
-        print(f"[Timetable] Update failed: {type(e).__name__}: {e}")
+        print(f"[Timetable] complete error: {type(e).__name__}: {e}")
         raise HTTPException(
             status_code=500,
             detail={"error": "Could not update entry. Please try again."},

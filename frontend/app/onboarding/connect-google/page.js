@@ -149,9 +149,16 @@ export default function OnboardingSyllabusUpload() {
     borderRadius: "10px",
     padding: "16px",
     display: "flex",
-    alignItems: "center",
-    gap: "12px",
+    flexDirection: "column",
+    gap: "10px",
+    alignItems: "flex-start",
     transition: "border-color 200ms, background 200ms",
+  };
+
+  const slotActionStyle = {
+    alignSelf: "flex-end",
+    marginTop: "auto",
+    flexShrink: 0,
   };
 
   return (
@@ -189,7 +196,7 @@ export default function OnboardingSyllabusUpload() {
           return (
             <div key={sub.key} style={slotStyle}>
               <SubjectBadge subject={sub.key} showCode />
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ width: "100%", minWidth: 0 }}>
                 <p
                   style={{
                     fontFamily: "Inter, sans-serif",
@@ -229,6 +236,7 @@ export default function OnboardingSyllabusUpload() {
               {status === "done" ? (
                 <span
                   style={{
+                    ...slotActionStyle,
                     width: "24px",
                     height: "24px",
                     borderRadius: "50%",
@@ -236,7 +244,6 @@ export default function OnboardingSyllabusUpload() {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    flexShrink: 0,
                   }}
                   aria-hidden
                 >
@@ -256,6 +263,7 @@ export default function OnboardingSyllabusUpload() {
                   type="button"
                   onClick={() => fileRefs[sub.key].current?.click()}
                   style={{
+                    ...slotActionStyle,
                     background: "transparent",
                     border:
                       "0.5px solid color-mix(in srgb, var(--exam-urgent) 40%, transparent)",
@@ -265,7 +273,6 @@ export default function OnboardingSyllabusUpload() {
                     fontSize: "11px",
                     color: "var(--exam-urgent)",
                     cursor: "pointer",
-                    flexShrink: 0,
                   }}
                 >
                   Retry
@@ -276,6 +283,7 @@ export default function OnboardingSyllabusUpload() {
                   disabled={status === "uploading"}
                   onClick={() => fileRefs[sub.key].current?.click()}
                   style={{
+                    ...slotActionStyle,
                     background: "transparent",
                     border: "0.5px solid var(--gold-border-hover)",
                     borderRadius: "6px",
@@ -284,7 +292,6 @@ export default function OnboardingSyllabusUpload() {
                     fontSize: "11px",
                     color: "var(--gold)",
                     cursor: status === "uploading" ? "wait" : "pointer",
-                    flexShrink: 0,
                   }}
                 >
                   {status === "uploading" ? "…" : "Upload PDF"}

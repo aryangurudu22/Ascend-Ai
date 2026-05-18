@@ -86,6 +86,19 @@ function formatCoveredDate(iso) {
   }
 }
 
+/** Recompute per-subject coverage from local topics (no API round-trip). */
+function coverageFromTopics(topicsBySubject) {
+  const cov = {};
+  for (const sub of SUBJECTS) {
+    const rows = topicsBySubject[sub.key] || [];
+    const total = rows.length;
+    const covered = rows.filter((t) => t.is_covered).length;
+    const percentage = total > 0 ? Math.round((covered / total) * 100) : 0;
+    cov[sub.key] = { covered, total, percentage };
+  }
+  return cov;
+}
+
 /** Days until nearest exam from onboarding localStorage data. */
 function minDaysToExam() {
   try {
@@ -345,31 +358,17 @@ export default function SyllabusTrackerPage() {
     return SUBJECTS.some((s) => (topics[s.key] || []).length > 0);
   }, [topics]);
 
-  const subjectsToShow =
+  const filteredTopics = useMemo(() => {
+    if (activeSubject === FILTER_ALL) return topics;
+    return Object.fromEntries(
+      Object.entries(topics).filter(([subject]) => subject === activeSubject)
+    );
+  }, [topics, activeSubject]);
+
+  const subjectKeysToRender =
     activeSubject === FILTER_ALL
       ? SUBJECTS.map((s) => s.key)
       : [activeSubject];
-
-  const displayTopicsList = useMemo(() => {
-    if (activeSubject === FILTER_ALL) {
-      const merged = [];
-      for (const key of subjectsToShow) {
-        for (const t of topics[key] || []) {
-          merged.push({ ...t, _subject: key });
-        }
-      }
-      return merged;
-    }
-    return (topics[activeSubject] || []).map((t) => ({
-      ...t,
-      _subject: activeSubject,
-    }));
-  }, [topics, activeSubject, subjectsToShow]);
-
-  const chaptersGrouped = useMemo(
-    () => groupTopicsByChapter(displayTopicsList),
-    [displayTopicsList]
-  );
 
   const toggleChapter = (chapterName) => {
     setExpandedChapters((prev) => ({
@@ -379,37 +378,39 @@ export default function SyllabusTrackerPage() {
   };
 
   /** Optimistic PATCH toggle for a topic row. */
-  const handleToggleTopic = async (topic) => {
+  const handleToggleTopic = async (topic, e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (topic.is_global || !session?.access_token) return;
 
+    const topicId = topic.id;
     const prevCovered = topic.is_covered;
     const prevCoveredAt = topic.covered_at;
     const nextCovered = !prevCovered;
     const nextCoveredAt = nextCovered ? new Date().toISOString() : null;
 
-    const patchLocal = (list) =>
-      list.map((t) =>
-        t.id === topic.id
-          ? { ...t, is_covered: nextCovered, covered_at: nextCoveredAt }
-          : t
-      );
+    const applyLocalToggle = (isCovered, coveredAt) => {
+      setTopics((prev) => {
+        const updated = { ...prev };
+        Object.keys(updated).forEach((subject) => {
+          updated[subject] = (updated[subject] || []).map((t) =>
+            t.id === topicId
+              ? { ...t, is_covered: isCovered, covered_at: coveredAt }
+              : t
+          );
+        });
+        setCoverage(coverageFromTopics(updated));
+        return updated;
+      });
+    };
 
-    setTopics((prev) => {
-      const next = { ...prev };
-      const subKey = topic._subject || activeSubject;
-      if (subKey && subKey !== FILTER_ALL) {
-        next[subKey] = patchLocal(next[subKey] || []);
-      } else {
-        for (const k of Object.keys(next)) {
-          next[k] = patchLocal(next[k] || []);
-        }
-      }
-      return next;
-    });
+    applyLocalToggle(nextCovered, nextCoveredAt);
 
     try {
       const res = await fetch(
-        `${API_URL}/syllabus/topics/${topic.id}/toggle`,
+        `${API_URL}/syllabus/topics/${topicId}/toggle`,
         {
           method: "PATCH",
           headers: { Authorization: `Bearer ${session.access_token}` },
@@ -417,39 +418,10 @@ export default function SyllabusTrackerPage() {
       );
       if (!res.ok) throw new Error("Toggle failed");
       const data = await res.json();
-      setTopics((prev) => {
-        const next = { ...prev };
-        for (const k of Object.keys(next)) {
-          next[k] = (next[k] || []).map((t) =>
-            t.id === topic.id
-              ? {
-                  ...t,
-                  is_covered: data.is_covered,
-                  covered_at: data.covered_at,
-                }
-              : t
-          );
-        }
-        return next;
-      });
-      fetchTopics();
+      applyLocalToggle(data.is_covered, data.covered_at ?? null);
     } catch (err) {
       console.error("[Syllabus] toggle", err);
-      setTopics((prev) => {
-        const next = { ...prev };
-        for (const k of Object.keys(next)) {
-          next[k] = (next[k] || []).map((t) =>
-            t.id === topic.id
-              ? {
-                  ...t,
-                  is_covered: prevCovered,
-                  covered_at: prevCoveredAt,
-                }
-              : t
-          );
-        }
-        return next;
-      });
+      applyLocalToggle(prevCovered, prevCoveredAt);
     }
   };
 
@@ -803,6 +775,10 @@ export default function SyllabusTrackerPage() {
         <>
           <div className="syllabus-coverage-grid">
             {SUBJECTS.map((sub) => {
+              if (activeSubject !== FILTER_ALL && activeSubject !== sub.key) {
+                return null;
+              }
+
               const cov = coverage[sub.key] || {
                 covered: 0,
                 total: 0,
@@ -885,18 +861,125 @@ export default function SyllabusTrackerPage() {
           </div>
 
           <section style={{ margin: "20px var(--page-padding) 40px" }}>
-            {Object.keys(chaptersGrouped).map((chapterName) => {
-              const chapterTopics = chaptersGrouped[chapterName];
-              const coveredInChapter = chapterTopics.filter(
-                (t) => t.is_covered
-              ).length;
-              const expanded = expandedChapters[chapterName];
+            {subjectKeysToRender.map((subjectKey) => {
+              const sub =
+                SUBJECTS.find((s) => s.key === subjectKey) || SUBJECTS[0];
+              const subjectTopics = filteredTopics[subjectKey] || [];
+              const uploadState = uploadStatus[subjectKey];
 
-              return (
-                <div key={chapterName} style={{ marginBottom: 12 }}>
+              if (subjectTopics.length === 0) {
+                return (
+                  <motion.div
+                    key={`upload-${subjectKey}`}
+                    style={{
+                      background: "var(--card)",
+                      border: "0.5px solid var(--gold-border)",
+                      borderRadius: 10,
+                      padding: 24,
+                      textAlign: "center",
+                      marginBottom: 16,
+                    }}
+                  >
+                    <svg
+                      width={24}
+                      height={24}
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="var(--gold-icon)"
+                      strokeWidth={2}
+                      style={{ margin: "0 auto" }}
+                      aria-hidden
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="17 8 12 3 7 8" />
+                      <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                    <p
+                      style={{
+                        fontFamily: "'Playfair Display', serif",
+                        fontSize: 15,
+                        color: "var(--text)",
+                        margin: "12px 0 0",
+                      }}
+                    >
+                      No syllabus uploaded for {sub.name}
+                    </p>
+                    <p
+                      style={{
+                        fontFamily: "Inter, sans-serif",
+                        fontSize: 12,
+                        color: "var(--text-muted)",
+                        marginTop: 6,
+                        marginBottom: 16,
+                      }}
+                    >
+                      Upload your Cambridge {sub.fullName} syllabus PDF
+                    </p>
+                    <input
+                      ref={fileRefs[subjectKey]}
+                      type="file"
+                      accept=".pdf"
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) handleFileChange(subjectKey, f);
+                        e.target.value = "";
+                      }}
+                    />
+                    {uploadState === "error" ? (
+                      <p
+                        style={{
+                          fontFamily: "Inter, sans-serif",
+                          fontSize: 11,
+                          color: "var(--exam-urgent)",
+                          marginBottom: 10,
+                        }}
+                      >
+                        Upload failed — try again
+                      </p>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={uploadState === "uploading"}
+                      onClick={() => fileRefs[subjectKey].current?.click()}
+                      style={{
+                        background: "transparent",
+                        border: "0.5px solid var(--gold-border-hover)",
+                        borderRadius: 8,
+                        padding: "10px 20px",
+                        fontFamily: "Inter, sans-serif",
+                        fontSize: 13,
+                        fontWeight: 500,
+                        color: "var(--gold)",
+                        cursor:
+                          uploadState === "uploading" ? "wait" : "pointer",
+                      }}
+                    >
+                      {uploadState === "uploading"
+                        ? "Extracting topics…"
+                        : "Upload Syllabus PDF"}
+                    </button>
+                  </motion.div>
+                );
+              }
+
+              const chaptersGrouped = groupTopicsByChapter(
+                subjectTopics.map((t) => ({ ...t, _subject: subjectKey }))
+              );
+
+              return Object.keys(chaptersGrouped).map((chapterName) => {
+                const chapterTopics = chaptersGrouped[chapterName];
+                const coveredInChapter = chapterTopics.filter(
+                  (t) => t.is_covered
+                ).length;
+                const chapterKey = `${subjectKey}::${chapterName}`;
+                const expanded = expandedChapters[chapterKey];
+
+                return (
+                  <div key={chapterKey} style={{ marginBottom: 12 }}>
                   <button
                     type="button"
-                    onClick={() => toggleChapter(chapterName)}
+                    onClick={() => toggleChapter(chapterKey)}
                     style={{
                       width: "100%",
                       display: "flex",
@@ -969,11 +1052,12 @@ export default function SyllabusTrackerPage() {
                           key={topic.id}
                           role="button"
                           tabIndex={0}
-                          onClick={() => handleToggleTopic(topic)}
+                          onClick={(e) => handleToggleTopic(topic, e)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
-                              handleToggleTopic(topic);
+                              e.stopPropagation();
+                              handleToggleTopic(topic, e);
                             }
                           }}
                           style={{
@@ -1057,8 +1141,9 @@ export default function SyllabusTrackerPage() {
                       ))}
                     </div>
                   )}
-                </div>
-              );
+                  </div>
+                );
+              });
             })}
           </section>
         </>

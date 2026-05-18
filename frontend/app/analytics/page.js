@@ -443,7 +443,6 @@ export default function AnalyticsPage() {
                 (breakdown.length ? breakdown : SUBJECTS.map((s) => ({ subject: s.key, percentage: 25 }))).map(
                   (row, idx, arr) => {
                     const meta = getSubjectByKey(row.subject);
-                    const name = meta?.name || row.subject;
                     const pct = row.percentage ?? 0;
                     const isLast = idx === arr.length - 1;
                     return (
@@ -457,18 +456,11 @@ export default function AnalyticsPage() {
                           borderBottom: isLast ? "none" : "0.5px solid var(--border)",
                         }}
                       >
-                        <SubjectBadge subject={row.subject} size="sm" />
-                        <span
-                          style={{
-                            fontFamily: "Inter, sans-serif",
-                            fontSize: 13,
-                            color: "var(--text)",
-                            width: 80,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {name}
-                        </span>
+                        <SubjectBadge
+                          subject={row.subject}
+                          size="sm"
+                          label={meta?.fullName || meta?.name}
+                        />
                         <motion.div
                           style={{
                             flex: 1,

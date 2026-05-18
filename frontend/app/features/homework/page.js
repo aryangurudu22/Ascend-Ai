@@ -141,9 +141,18 @@ function parseAnswerSections(text) {
     /(?:^|\n)\s*(DEFINITION|CAMBRIDGE ANSWER|EXAMINER TIP|COMMON MISTAKES)\s*\n?/gi;
   const parts = cleaned.split(pattern);
   const sections = {};
+
+  const cleanSectionContent = (content) => {
+    let c = String(content || "");
+    c = c.replace(/^:\s*/, "");
+    c = c.replace(/^Examiner Tip:\s*/i, "");
+    c = c.replace(/Mistake:\s*:/gi, "Mistake:");
+    return c.trim();
+  };
+
   for (let i = 1; i < parts.length; i += 2) {
     const header = String(parts[i] || "").toUpperCase().trim();
-    const body = String(parts[i + 1] || "").trim();
+    const body = cleanSectionContent(parts[i + 1]);
     if (header === "DEFINITION") sections.definition = body;
     else if (header === "CAMBRIDGE ANSWER") sections.cambridge = body;
     else if (header === "EXAMINER TIP") sections.examinerTip = body;
@@ -155,7 +164,7 @@ function parseAnswerSections(text) {
     !sections.examinerTip &&
     !sections.commonMistakes
   ) {
-    sections.cambridge = cleaned.trim();
+    sections.cambridge = cleanSectionContent(cleaned);
   }
   return sections;
 }

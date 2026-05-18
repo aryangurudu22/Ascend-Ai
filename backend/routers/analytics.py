@@ -20,6 +20,7 @@ from routers.notifications import create_notification, exam_alert_sent_today
 
 # Table names — single place to update if schema renames.
 HOMEWORK_TABLE = "homework_questions"
+ESSAY_CHECKS_TABLE = "essay_checks"
 QUIZ_SESSIONS_TABLE = "quiz_sessions"
 PAST_PAPERS_TABLE = "past_papers"
 NOTES_TABLE = "notes"
@@ -427,21 +428,29 @@ def analytics_summary(
     """
     Aggregate headline stats for the dashboard analytics page.
 
-    Counts rows in homework_questions, quiz_sessions, and
-    past_papers where user_id matches and created_at (or
-    completed_at for quizzes) falls inside the period window.
+    Counts rows in homework_questions, essay_checks,
+    quiz_sessions, and past_papers where user_id matches and
+    created_at (or completed_at for quizzes) falls inside the
+    period window.
     """
 
     period_key = _validate_period(period)
     start_iso = _period_start_iso(period_key)
 
-    # homework_questions → questions asked in the period.
-    questions_asked = _count_rows(
+    # homework_questions + essay_checks → questions asked in the period.
+    homework_count = _count_rows(
         HOMEWORK_TABLE,
         verified_user_id,
         "created_at",
         start_iso,
     )
+    essay_count = _count_rows(
+        ESSAY_CHECKS_TABLE,
+        verified_user_id,
+        "created_at",
+        start_iso,
+    )
+    questions_asked = homework_count + essay_count
 
     # quiz_sessions → flashcard quiz sessions (count every session).
     flashcard_sessions = _count_rows(
@@ -484,8 +493,8 @@ def analytics_subject_breakdown(
     verified_user_id: str = Depends(verify_bearer_token),
 ):
     """
-    Sum activity per subject across homework, notes, flashcards,
-    and timetable entries, then convert to percentages.
+    Sum activity per subject across homework_questions, notes,
+    quiz_sessions, and timetable_entries, then convert to percentages.
 
     If total activity is zero, return 25% for each subject.
     """
@@ -522,11 +531,11 @@ def analytics_subject_breakdown(
             "created_at",
             start_iso,
         )
-        flashcards_n = _count_by_subject_id(
-            FLASHCARDS_TABLE,
+        quiz_n = _count_by_subject_id(
+            QUIZ_SESSIONS_TABLE,
             verified_user_id,
             subject_id,
-            "created_at",
+            "started_at",
             start_iso,
         )
         timetable_n = _count_by_subject_id(
@@ -537,7 +546,7 @@ def analytics_subject_breakdown(
             start_iso,
         )
 
-        totals_by_key[skey] = homework_n + notes_n + flashcards_n + timetable_n
+        totals_by_key[skey] = homework_n + notes_n + quiz_n + timetable_n
 
     grand_total = sum(totals_by_key.values())
 

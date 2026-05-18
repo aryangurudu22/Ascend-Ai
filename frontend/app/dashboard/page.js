@@ -581,6 +581,9 @@ export default function DashboardPage() {
   // homeworkRows â€” from GET /homework/history for weekly question count
   const [homeworkRows, setHomeworkRows] = useState([]);
 
+  // questionsAsked â€” total homework_questions rows for this user (no date filter)
+  const [questionsAsked, setQuestionsAsked] = useState(0);
+
   // weekBounds â€” Monday/Sunday keys used for stats filtering
   const [weekBounds, setWeekBounds] = useState({
     start: getMondayKey(new Date()),
@@ -695,6 +698,18 @@ export default function DashboardPage() {
         setHomeworkRows(hw);
         setWeekBounds({ start: fetchedWeekStart, end: fetchedWeekEnd });
 
+        const { count: hwCount } = await supabase
+          .from("homework_questions")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", authUser.id);
+
+        const { count: essayCount } = await supabase
+          .from("essay_checks")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", authUser.id);
+
+        setQuestionsAsked((hwCount || 0) + (essayCount || 0));
+
         const initialChecked = {};
         for (const e of entries) {
           if (e.is_completed) initialChecked[e.id] = true;
@@ -787,14 +802,6 @@ export default function DashboardPage() {
     (e) => checkedSessions[e.id] || e.is_completed,
   ).length;
   const hoursStudied = (completedWeek * 1.5).toFixed(1);
-
-  const questionsThisWeek = homeworkRows.filter((q) => {
-    if (!q?.created_at) return false;
-    const created = new Date(q.created_at);
-    const start = new Date(`${weekBounds.start}T00:00:00`);
-    const end = new Date(`${weekBounds.end}T23:59:59`);
-    return created >= start && created <= end;
-  }).length;
 
   // Use enhanced countdown when API returned at least one subject row
   const useExamIntelligence = examIntelligence.length > 0;
@@ -1320,7 +1327,7 @@ export default function DashboardPage() {
         </div>
         <div style={weekStatCardStyle}>
           <span style={weekStatLabelStyle}>Questions Asked</span>
-          <span style={weekStatValueStyle}>{questionsThisWeek}</span>
+          <span style={weekStatValueStyle}>{questionsAsked}</span>
         </div>
       </div>
 

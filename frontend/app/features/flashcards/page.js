@@ -986,6 +986,7 @@ export default function FlashcardsPage() {
   const [quizOptions, setQuizOptions] = useState(null);
   const [selectedOption, setSelectedOption] = useState(null);
   const [quizAnswers, setQuizAnswers] = useState([]);
+  const [correctCount, setCorrectCount] = useState(0);
   const [quizStartTime, setQuizStartTime] = useState(null);
   const [quizEndTime, setQuizEndTime] = useState(null);
 
@@ -1030,6 +1031,7 @@ export default function FlashcardsPage() {
   // reads the freshest values (closures captured at click time
   // would otherwise lag a tick behind setState).
   const quizSessionIdRef = useRef(null);
+  const correctCountRef = useRef(0);
   useEffect(() => {
     quizSessionIdRef.current = quizSessionId;
   }, [quizSessionId]);
@@ -1614,6 +1616,8 @@ export default function FlashcardsPage() {
     setQuizOptions(null);
     setSelectedOption(null);
     setQuizAnswers([]);
+    setCorrectCount(0);
+    correctCountRef.current = 0;
     setQuizStartTime(null);
     setQuizEndTime(null);
     // Also wipe the backend-session footprint so a retake gets
@@ -1848,7 +1852,7 @@ export default function FlashcardsPage() {
   // Fire-and-forget — VIEW 5 falls back to client-computed
   // values until the response arrives (and continues to fall
   // back forever if the call fails).
-  const completeQuizOnBackend = () => {
+  const completeQuizOnBackend = (totalQuestions) => {
     if (!quizSessionIdRef.current) return;
 
     (async () => {
@@ -1877,12 +1881,19 @@ export default function FlashcardsPage() {
         }
 
         const data = await res.json();
+        const total =
+          Number(totalQuestions) ||
+          Number(data?.total_cards) ||
+          0;
+        const localCorrect = correctCountRef.current;
+        const scorePercent =
+          total > 0 ? Math.round((localCorrect / total) * 100) : 0;
         // Save the full envelope so VIEW 5 can replace its
         // client-computed percentage + label.
         setServerFinalResult({
-          final_score: Number(data?.final_score) || 0,
-          total_cards: Number(data?.total_cards) || 0,
-          percentage: Number(data?.percentage) || 0,
+          final_score: localCorrect,
+          total_cards: total,
+          percentage: scorePercent,
           time_taken_seconds:
             Number(data?.time_taken_seconds) || 0,
           performance_label: String(data?.performance_label || ""),
@@ -1913,6 +1924,11 @@ export default function FlashcardsPage() {
     const selectedText = quizOptions.options[optionIndex];
     const correctText = quizOptions.options[quizOptions.correctIndex];
     const isCorrect = optionIndex === quizOptions.correctIndex;
+
+    if (isCorrect) {
+      setCorrectCount((prev) => prev + 1);
+      correctCountRef.current += 1;
+    }
 
     setSelectedOption(optionIndex);
     setQuizAnswers((prev) => [
@@ -1962,7 +1978,7 @@ export default function FlashcardsPage() {
       // surface the backend percentage + label as soon as the
       // response arrives, or fall back to the local computation
       // forever if the call fails.
-      completeQuizOnBackend();
+      completeQuizOnBackend(quizCards.length);
     }
   };
 
@@ -2192,12 +2208,12 @@ export default function FlashcardsPage() {
   // were correct + total + percent. Used by VIEW 4 (live score)
   // and VIEW 5 (final stats).
   const sessionScore = useMemo(() => {
-    const correct = quizAnswers.filter((a) => a.is_correct).length;
-    const total = selectedTopic?.cards?.length ?? 0;
+    const total = quizCards.length || 0;
     const answered = quizAnswers.length;
-    const percent = total > 0 ? Math.round((correct / total) * 100) : 0;
-    return { correct, total, answered, percent };
-  }, [quizAnswers, selectedTopic]);
+    const percent =
+      total > 0 ? Math.round((correctCount / total) * 100) : 0;
+    return { correct: correctCount, total, answered, percent };
+  }, [correctCount, quizCards.length, quizAnswers.length]);
 
   // masteryByCard: { card_id: { before, after, delta } }
   // Used by VIEW 5's per-card table.
@@ -3606,18 +3622,10 @@ export default function FlashcardsPage() {
     // Local total comes from `quizCards` so it reflects what
     // Aisha actually answered (capped at QUIZ_SESSION_SIZE)
     // rather than every card in the topic.
-    const total = serverFinalResult?.total_cards || quizCards.length;
-    const correct =
-      typeof serverFinalResult?.final_score === "number"
-        ? serverFinalResult.final_score
-        : quizAnswers.filter((a) => a.is_correct).length;
+    const total = quizCards.length;
+    const correct = correctCount;
     const wrong = Math.max(0, total - correct);
-    const percent =
-      typeof serverFinalResult?.percentage === "number"
-        ? serverFinalResult.percentage
-        : total > 0
-        ? Math.round((correct / total) * 100)
-        : 0;
+    const percent = total > 0 ? Math.round((correctCount / total) * 100) : 0;
 
     // ── Performance label ──
     // The backend's label is the canonical one (Excellent / Good

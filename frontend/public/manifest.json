@@ -45,7 +45,7 @@
     },
     {
       "src": "/screenshot-dashboard.png",
-      "sizes": "390x844",
+      "sizes": "1280x720",
       "type": "image/png",
       "label": "AscendAI Mobile",
       "form_factor": "narrow"

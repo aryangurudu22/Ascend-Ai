@@ -114,6 +114,44 @@ const ACCEPTED_MIME = "application/pdf";
 // Cambridge runs two exam sessions a year.
 const SESSION_OPTIONS = ["May/June", "October/November"];
 
+// Upload modal form field styles — design-system tokens only.
+const UPLOAD_MODAL_LABEL_STYLE = {
+  display: "block",
+  fontFamily: "Inter, sans-serif",
+  fontSize: "10px",
+  fontWeight: 500,
+  textTransform: "uppercase",
+  letterSpacing: "0.1em",
+  color: "var(--date-color)",
+  marginBottom: "6px",
+};
+
+const UPLOAD_MODAL_FIELD_STYLE = {
+  background: "var(--card-hover)",
+  border: "0.5px solid var(--gold-border-hover)",
+  borderRadius: "8px",
+  padding: "10px 14px",
+  fontFamily: "Inter, sans-serif",
+  fontSize: "13px",
+  color: "var(--text)",
+  width: "100%",
+  boxSizing: "border-box",
+};
+
+const UPLOAD_MODAL_FIELD_ERROR_BORDER = "0.5px solid var(--exam-urgent)";
+
+function uploadFieldFocus(e) {
+  e.target.style.borderColor = "var(--gold)";
+  e.target.style.outline = "none";
+}
+
+function uploadFieldBlur(e, hasError) {
+  e.target.style.outline = "none";
+  e.target.style.border = hasError
+    ? UPLOAD_MODAL_FIELD_ERROR_BORDER
+    : UPLOAD_MODAL_FIELD_STYLE.border;
+}
+
 // VIEW 1 filter tabs — client-side only (no extra API call).
 const FILTER_ALL = "all";
 const FILTER_OPTIONS = [
@@ -1276,12 +1314,18 @@ function SubjectDropdown({ subjectIndex, value, onChange, error }) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={
-          "w-full flex items-center justify-between gap-2 px-3 py-2 " +
-          "bg-input-bg border rounded-4px text-text-primary font-body " +
-          "text-sm focus:outline-none focus:ring-2 focus:ring-gold/30 " +
-          (error ? "border-red-400" : "border-input-border")
-        }
+        style={{
+          ...UPLOAD_MODAL_FIELD_STYLE,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "8px",
+          appearance: "none",
+          cursor: "pointer",
+          border: error ? UPLOAD_MODAL_FIELD_ERROR_BORDER : UPLOAD_MODAL_FIELD_STYLE.border,
+        }}
+        onFocus={uploadFieldFocus}
+        onBlur={(e) => uploadFieldBlur(e, error)}
       >
         <span className="flex items-center gap-2 truncate">
           {selected ? (
@@ -1311,11 +1355,23 @@ function SubjectDropdown({ subjectIndex, value, onChange, error }) {
         <ul
           role="listbox"
           aria-label="Choose subject"
-          className={
-            "absolute left-0 right-0 mt-1 z-10 bg-white border " +
-            "border-input-border rounded-4px shadow-lg max-h-64 " +
-            "overflow-y-auto"
-          }
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            marginTop: "4px",
+            zIndex: 10,
+            background: "var(--card)",
+            color: "var(--text)",
+            border: "0.5px solid var(--gold-border-hover)",
+            borderRadius: "8px",
+            boxShadow: "0 8px 24px rgba(0, 0, 0, 0.25)",
+            maxHeight: "16rem",
+            overflowY: "auto",
+            listStyle: "none",
+            margin: 0,
+            padding: 0,
+          }}
         >
           {subjects.length === 0 ? (
             <li className="px-3 py-2 text-text-muted text-sm font-body">
@@ -1650,11 +1706,19 @@ function UploadModal({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+          <style>{`
+            #paper-session {
+              appearance: none;
+              cursor: pointer;
+            }
+            #paper-session option {
+              background: var(--card);
+              color: var(--text);
+            }
+          `}</style>
           {/* ── Subject ─────────────────────────────────────── */}
           <div>
-            <label className="block font-body text-text-muted text-xs uppercase tracking-wide mb-1">
-              Subject
-            </label>
+            <label style={UPLOAD_MODAL_LABEL_STYLE}>Subject</label>
             <SubjectDropdown
               subjectIndex={subjectIndex}
               value={subjectId}
@@ -1671,10 +1735,7 @@ function UploadModal({
           {/* ── Year + Session (two columns) ────────────────── */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label
-                htmlFor="paper-year"
-                className="block font-body text-text-muted text-xs uppercase tracking-wide mb-1"
-              >
+              <label htmlFor="paper-year" style={UPLOAD_MODAL_LABEL_STYLE}>
                 Year
               </label>
               <input
@@ -1685,12 +1746,14 @@ function UploadModal({
                 value={year}
                 onChange={(e) => setYear(e.target.value)}
                 placeholder="e.g. 2023"
-                className={
-                  "w-full px-3 py-2 bg-input-bg border rounded-4px " +
-                  "text-text-primary font-body text-sm placeholder:text-text-hint " +
-                  "focus:outline-none focus:ring-2 focus:ring-gold/30 " +
-                  (errors.year ? "border-red-400" : "border-input-border")
-                }
+                style={{
+                  ...UPLOAD_MODAL_FIELD_STYLE,
+                  border: errors.year
+                    ? UPLOAD_MODAL_FIELD_ERROR_BORDER
+                    : UPLOAD_MODAL_FIELD_STYLE.border,
+                }}
+                onFocus={uploadFieldFocus}
+                onBlur={(e) => uploadFieldBlur(e, !!errors.year)}
               />
               {errors.year && (
                 <p className="text-red-600 text-xs font-body mt-1">
@@ -1699,22 +1762,23 @@ function UploadModal({
               )}
             </div>
             <div>
-              <label
-                htmlFor="paper-session"
-                className="block font-body text-text-muted text-xs uppercase tracking-wide mb-1"
-              >
+              <label htmlFor="paper-session" style={UPLOAD_MODAL_LABEL_STYLE}>
                 Session
               </label>
               <select
                 id="paper-session"
                 value={session}
                 onChange={(e) => setSession(e.target.value)}
-                className={
-                  "w-full px-3 py-2 bg-input-bg border rounded-4px " +
-                  "text-text-primary font-body text-sm " +
-                  "focus:outline-none focus:ring-2 focus:ring-gold/30 " +
-                  (errors.session ? "border-red-400" : "border-input-border")
-                }
+                style={{
+                  ...UPLOAD_MODAL_FIELD_STYLE,
+                  appearance: "none",
+                  cursor: "pointer",
+                  border: errors.session
+                    ? UPLOAD_MODAL_FIELD_ERROR_BORDER
+                    : UPLOAD_MODAL_FIELD_STYLE.border,
+                }}
+                onFocus={uploadFieldFocus}
+                onBlur={(e) => uploadFieldBlur(e, !!errors.session)}
               >
                 <option value="">Choose…</option>
                 {SESSION_OPTIONS.map((s) => (
