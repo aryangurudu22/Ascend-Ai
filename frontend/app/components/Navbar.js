@@ -472,12 +472,12 @@ export default function Navbar() {
                     role="button"
                     tabIndex={0}
                     onClick={() => {
-                      router.push("/dashboard");
+                      router.push("/settings");
                       setProfileOpen(false);
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
-                        router.push("/dashboard");
+                        router.push("/settings");
                         setProfileOpen(false);
                       }
                     }}

@@ -261,3 +261,8 @@ body {
   background-size: 200px 200px;
   transition: opacity 300ms ease;
 }
+
+/* PWA install banner — elevated card shadow using theme tokens */
+.pwa-install-banner {
+  box-shadow: 0 4px 24px color-mix(in srgb, var(--bg) 40%, transparent);
+}

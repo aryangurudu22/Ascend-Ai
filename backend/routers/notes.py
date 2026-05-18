@@ -18,6 +18,10 @@
 #     • Triggers the n8n workflow that polls Google Classroom.
 #     • Gracefully no-ops when N8N_WEBHOOK_URL is not set yet.
 #
+#   POST /notes/trigger-sync
+#     • Internal n8n cron — loops all user_profiles and syncs each.
+#     • No auth — uses service-role Supabase client from database.py.
+#
 #   GET /notes/list
 #     • Returns paginated notes for the signed-in student,
 #       with subject name + code joined from `subjects`.
@@ -73,6 +77,7 @@ GROQ_TEMPERATURE = 0.3
 NOTES_TABLE = "notes"
 SUBJECTS_TABLE = "subjects"
 PROFILES_TABLE = "profiles"
+USER_PROFILES_TABLE = "user_profiles"
 CLASSROOM_POSTS_TABLE = "google_classroom_posts"
 
 # Google OAuth client credentials — from backend/.env.
@@ -154,6 +159,15 @@ class NotesSyncResponse(BaseModel):
     synced: bool
     message: str
     note: Optional[str] = None
+
+
+class NotesTriggerSyncResponse(BaseModel):
+    # Number of users whose Classroom sync webhook succeeded.
+    triggered: int
+    # Number of users skipped or failed (no tokens, refresh error, webhook error).
+    errors: int
+    # Total user_id rows returned from user_profiles.
+    total_users: int
 
 
 class NoteListItem(BaseModel):
@@ -819,6 +833,154 @@ async def sync_notes(
             "n8n webhook not configured yet — will activate when n8n is deployed"
         ),
     )
+
+
+# ============================================================
+# HELPER: _fetch_all_user_profile_ids — all students for n8n cron
+# ============================================================
+def _fetch_all_user_profile_ids() -> List[str]:
+    # Query user_profiles via service-role client (database.py supabase).
+    try:  # wrap Supabase read so cron still returns partial results on failure.
+        result = (  # PostgREST query chain.
+            supabase.from_("profiles")  # all onboarded students.
+            .select("user_id")  # only need UUID column for the batch loop.
+            .execute()  # run query with service role (bypasses RLS).
+        )  # end chain
+        rows = getattr(result, "data", None) or []  # normalise to list of dicts.
+    except Exception as e:  # network or schema error.
+        print(  # log for uvicorn console — n8n can alert on empty batches.
+            f"[Notes] user_profiles list failed: {type(e).__name__}: {e}"
+        )  # end print
+        return []  # empty list — caller reports total_users=0.
+
+    user_ids: List[str] = []  # accumulator for non-empty UUID strings.
+    for row in rows:  # one user_profiles row per student.
+        uid = str(row.get("user_id") or "").strip()  # coerce UUID to str.
+        if uid:  # skip blank ids from malformed rows.
+            user_ids.append(uid)  # collect for trigger loop.
+    return user_ids  # full student list for hourly sync.
+
+
+# ============================================================
+# HELPER: _user_has_usable_google_tokens — same check as /classroom/posts
+# ============================================================
+def _user_has_usable_google_tokens(user_id: str) -> bool:
+    # Load google_* columns from profiles (same helper as Classroom routes).
+    profile = _fetch_profile_google_tokens(user_id)  # read profiles row via service role.
+    if not profile:  # student never connected Google or row missing.
+        return False  # count as error in trigger-sync batch.
+
+    access_token = (profile.get("google_access_token") or "").strip()  # short-lived token.
+    refresh_token = (profile.get("google_refresh_token") or "").strip()  # long-lived refresh secret.
+    if not access_token and not refresh_token:  # Classroom not linked.
+        return False  # cannot sync without OAuth tokens.
+
+    # Refresh when expired — mirrors GET /classroom/posts before API calls.
+    try:  # validate or refresh access token with Google OAuth library.
+        _get_valid_google_access_token(profile)  # may write new token back to profiles.
+    except HTTPException:  # expired refresh — student must reconnect Google.
+        return False  # count as error.
+    except Exception as e:  # unexpected Google client failure.
+        print(  # log per-user failure without stopping the batch.
+            f"[Notes] Google token check failed for {user_id!r}: "
+            f"{type(e).__name__}: {e}"
+        )  # end print
+        return False  # count as error.
+
+    return True  # tokens OK — safe to trigger n8n sync for this user.
+
+
+# ============================================================
+# HELPER: _post_n8n_notes_sync_webhook — core logic from POST /notes/sync
+# ============================================================
+async def _post_n8n_notes_sync_webhook(user_id: str, triggered_by: str) -> bool:
+    # Same webhook POST as sync_notes — does not modify that endpoint.
+    n8n_url = os.getenv("N8N_WEBHOOK_URL", "")
+    if not n8n_url:
+        # No webhook URL configured — skip silently
+        return
+
+    try:  # httpx async POST — one request per student.
+        async with httpx.AsyncClient() as client:  # short-lived HTTP client.
+            response = await client.post(  # call n8n webhook (same body as /notes/sync).
+                n8n_url,  # N8N_WEBHOOK_URL target.
+                json={  # JSON body n8n expects.
+                    "user_id": user_id,  # which student to poll Classroom for.
+                    "triggered_by": triggered_by,  # scheduled_sync vs manual_sync.
+                },  # end json
+                timeout=10.0,  # do not block the hourly cron too long.
+            )  # end post
+        if response.is_success:  # HTTP 2xx from n8n.
+            return True  # sync successfully queued for this user.
+        print(  # log non-success status for debugging.
+            f"[Notes] trigger-sync webhook HTTP {response.status_code} "
+            f"for user {user_id!r}: {response.text[:200]!r}"
+        )  # end print
+        return False  # n8n rejected or errored.
+    except Exception as e:  # network timeout or DNS failure.
+        print(  # log and continue batch.
+            f"[Notes] trigger-sync webhook failed for {user_id!r}: "
+            f"{type(e).__name__}: {e}"
+        )  # end print
+        return False  # count as error for this user.
+
+
+# ================================================
+# INTERNAL TRIGGER — called by n8n every hour
+# No auth required — uses service role key
+# n8n URL: POST /notes/trigger-sync
+# No Authorization header needed
+# ================================================
+@router.post(
+    "/trigger-sync",
+    response_model=NotesTriggerSyncResponse,
+    summary="Batch-trigger Google Classroom sync for all students (n8n cron)",
+)
+async def trigger_notes_sync() -> NotesTriggerSyncResponse:
+    # STEP 1 — load every student UUID from user_profiles (service role).
+    user_ids = _fetch_all_user_profile_ids()  # all user_id values from Postgres.
+    total_users = len(user_ids)  # denominator for n8n monitoring.
+    triggered_count = 0  # successful webhook calls.
+    error_count = 0  # missing tokens or failed webhook calls.
+
+    n8n_url = os.getenv("N8N_WEBHOOK_URL", "")
+    if not n8n_url:
+        # No webhook URL configured — skip silently
+        return NotesTriggerSyncResponse(
+            triggered=triggered_count,
+            errors=error_count,
+            total_users=total_users,
+        )
+
+    # STEP 2 — process each user independently so one failure does not stop the batch.
+    for user_id in user_ids:  # foreach student in user_profiles.
+        try:  # isolate per-user errors.
+            # STEP 2a — ensure Google tokens exist and are refreshable (profiles table).
+            if not _user_has_usable_google_tokens(user_id):  # same token path as Classroom.
+                error_count += 1  # skip user without usable Google session.
+                continue  # next student.
+
+            # STEP 2b — fire the same n8n webhook payload as manual POST /notes/sync.
+            ok = await _post_n8n_notes_sync_webhook(  # POST to N8N_WEBHOOK_URL.
+                user_id, triggered_by="scheduled_sync"  # distinguish from manual_sync.
+            )  # end await
+            if ok:  # n8n accepted the sync job.
+                triggered_count += 1  # success tally.
+            else:  # webhook missing or HTTP error.
+                error_count += 1  # failure tally.
+        except Exception as e:  # guard against unexpected bugs per iteration.
+            print(  # log and continue — never crash the whole hourly cron.
+                f"[Notes] trigger-sync unexpected error for {user_id!r}: "
+                f"{type(e).__name__}: {e}"
+            )  # end print
+            error_count += 1  # count as error.
+
+    # STEP 3 — summary JSON for n8n monitoring.
+    return NotesTriggerSyncResponse(  # spec response shape for n8n HTTP node.
+        triggered=triggered_count,  # int — syncs queued successfully.
+        errors=error_count,  # int — failures (tokens or webhook).
+        total_users=total_users,  # int — rows read from user_profiles.
+    )  # end return
 
 
 # ============================================================

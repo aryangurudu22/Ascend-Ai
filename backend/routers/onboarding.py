@@ -687,21 +687,22 @@ def save_exam_dates(
             continue
 
         try:
-            # The UPDATE: sets exam_date for any row whose code
-            # matches. Returns the affected row(s) in .data.
-            result = (
-                supabase
-                .table(SUBJECTS_TABLE)
-                .update({
-                    # exam_date — ISO 'YYYY-MM-DD' string the
-                    # HTML date picker produces. Postgres
-                    # coerces it into a date.
+            # The UPDATE: sets exam_date and user_id for the row whose code matches.
+            result = (  # Supabase client returns affected rows under .data
+                supabase  # Service-role client from database.py (shared across routers)
+                .table(SUBJECTS_TABLE)  # Constant "subjects" — one UPDATE per payload entry
+                .update({  # Only these columns are written; other columns stay unchanged
+                    # exam_date — ISO date string from the date picker
                     "exam_date": date_value,
+                    # user_id — now saved per user so each user has
+                    # their own exam dates and they don't overwrite
+                    # each other
+                    "user_id": verified_user_id,
                 })
-                .eq("code", code)
-                .execute()
+                .eq("code", code)  # WHERE syllabus code matches this loop's trimmed subject_code
+                .execute()  # Run the PostgREST UPDATE and wait for the HTTP response
             )
-            affected = getattr(result, "data", None) or []
+            affected = getattr(result, "data", None) or []  # Normalise to list of updated rows (may be empty)
 
             if affected:
                 # Bump the success counter for each row we

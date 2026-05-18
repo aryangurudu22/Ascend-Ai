@@ -1,0 +1,54 @@
+{
+  "id": "/dashboard",
+  "name": "AscendAI",
+  "short_name": "AscendAI",
+  "description": "Cambridge AS Level AI Study Assistant",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#0A0F1E",
+  "theme_color": "#D4AF37",
+  "orientation": "portrait",
+  "categories": ["education", "productivity"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshot-dashboard.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "label": "AscendAI Dashboard",
+      "form_factor": "wide"
+    },
+    {
+      "src": "/screenshot-dashboard.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "label": "AscendAI Mobile",
+      "form_factor": "narrow"
+    }
+  ]
+}

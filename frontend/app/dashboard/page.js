@@ -662,6 +662,7 @@ export default function DashboardPage() {
             return merged;
           });
         }
+
       }
 
       if (token && authUser.id) {

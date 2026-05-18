@@ -31,6 +31,11 @@
 #     • Verifies ownership server-side so a logged-in user
 #       cannot mark someone else's session done.
 #
+#   POST /timetable/trigger-generate
+#     • Internal n8n cron — loops all profiles and regenerates
+#       each student's 2-week timetable (force_regenerate=True).
+#     • No auth — uses service-role Supabase client from database.py.
+#
 # ⚠ LIVE-SCHEMA NOTES — the column names differ from the spec
 # ------------------------------------------------------------
 # `timetable_entries` actually has:
@@ -183,6 +188,15 @@ PROMPT_DATE_FORMAT = "%A %d %B %Y"
 # in the human-friendly summary message.
 URGENCY_ORDER = ("critical", "high", "medium", "low")
 
+# Slug → Cambridge syllabus code — used when profiles.exam_dates JSON
+# stores keys like "economics" instead of "9708".
+SUBJECT_SLUG_TO_CODE: Dict[str, str] = {
+    "economics": "9708",
+    "business": "9609",
+    "english": "9093",
+    "ict": "9626",
+}
+
 
 # ============================================================
 # REQUEST / RESPONSE MODELS
@@ -214,6 +228,17 @@ class TimetableGenerateRequest(BaseModel):
             "if False, only generate when none exist for the window."
         ),
     )
+
+
+class TimetableTriggerGenerateResponse(BaseModel):
+    """JSON envelope returned by POST /timetable/trigger-generate (n8n cron)."""
+
+    # Number of students whose timetable generation succeeded.
+    triggered: int
+    # Number of students skipped or failed (missing profile, Groq error, etc.).
+    errors: int
+    # Total profile rows considered in the batch loop.
+    total_users: int
 
 
 class TimetableGenerateResponse(BaseModel):
@@ -672,40 +697,129 @@ def _parse_groq_entries(raw: str) -> "tuple[List[Dict[str, Any]], bool]":
 
 
 # ============================================================
-# ENDPOINT: POST /timetable/generate
+# HELPER: _apply_exam_date_overrides — merge profile dates onto subjects
+# ============================================================
+def _apply_exam_date_overrides(
+    subjects: List[Dict[str, Any]],
+    exam_dates: Dict[str, str],
+) -> None:
+    # Override shared subjects.exam_date when the student saved dates on their profile.
+    if not exam_dates:
+        return
+    for subject_row in subjects:
+        # Match trigger path dict built as name.lower() -> exam_date from subjects per user.
+        name_key = str(subject_row.get("name") or "").strip().lower()
+        if name_key and name_key in exam_dates:
+            subject_row["exam_date"] = exam_dates[name_key]
+            continue
+        code = str(subject_row.get("code") or "").strip()
+        if not code:
+            continue
+        for map_key, date_str in exam_dates.items():
+            mapped_code = SUBJECT_SLUG_TO_CODE.get(map_key.strip().lower(), map_key.strip())
+            if mapped_code == code:
+                subject_row["exam_date"] = date_str
+                break
+
+
+# ============================================================
+# HELPER: _fetch_all_profile_user_ids — every student for n8n Sunday cron
+# ============================================================
+def _fetch_all_profile_user_ids() -> List[str]:
+    # Read all user_id values from profiles via service-role client (database.py).
+    try:
+        result = (
+            supabase.from_(PROFILES_TABLE)
+            .select("user_id")
+            .execute()
+        )
+        rows = getattr(result, "data", None) or []
+    except Exception as e:
+        print(f"[Timetable] profiles list failed: {type(e).__name__}: {e}")
+        return []
+    user_ids: List[str] = []
+    for row in rows:
+        uid = str(row.get("user_id") or "").strip()
+        if uid:
+            user_ids.append(uid)
+    return user_ids
+
+
+# ============================================================
+# HELPER: _fetch_profile_generation_fields — study window (profiles only)
+# ============================================================
+def _fetch_profile_generation_fields(
+    user_id: str,
+) -> Optional[Dict[str, Any]]:
+    # Load study_start_time and study_end_time for one student (profiles row).
+    try:
+        result = (
+            supabase.table(PROFILES_TABLE)
+            .select("study_start_time, study_end_time")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(result, "data", None) or []
+        return rows[0] if rows else None
+    except Exception as e:
+        print(
+            f"[Timetable] profile generation fields failed for {user_id!r}: "
+            f"{type(e).__name__}: {e}"
+        )
+        return None
+
+
+# ============================================================
+# HELPER: _fetch_user_subject_exam_dates — per-user exam dates from subjects
+# ============================================================
+def _fetch_user_subject_exam_dates(user_id: str) -> Dict[str, str]:
+    # Query subjects for this user: active rows with a non-null exam_date.
+    try:
+        result = (
+            supabase.from_("subjects")
+            .select("name, code, exam_date")
+            .eq("user_id", user_id)
+            .eq("is_active", True)
+            .not_.is_("exam_date", "null")
+            .execute()
+        )
+        subjects_data = getattr(result, "data", None) or []  # List of dicts or empty on failure shape
+    except Exception as e:
+        print(
+            f"[Timetable] user subject exam_dates query failed for {user_id!r}: "
+            f"{type(e).__name__}: {e}"
+        )
+        return {}
+    exam_dates: Dict[str, str] = {}
+    for row in subjects_data:
+        exam_dates[str(row["name"]).lower()] = row["exam_date"]
+    return exam_dates
+
+
+# ============================================================
+# HELPER: _generate_timetable_for_user — core POST /timetable/generate logic
 # ============================================================
 # FLOW
-#   1. Pydantic validates the body. Auth dep verifies the JWT.
-#   2. We enforce token.user_id == body.user_id (anti-spoof).
-#   3. Profile read — `study_start_time` + `study_end_time`.
+#   1. Profile read — `study_start_time` + `study_end_time`.
 #      Missing → 404 "Please complete onboarding first."
-#   4. Subjects read — every active row.
+#   2. Subjects read — every active row (+ optional profile exam_dates).
 #      Missing → 404 "No subjects found".
-#   5. Window check — if force_regenerate=False and entries
+#   3. Window check — if force_regenerate=False and entries
 #      already exist in the next 14 days, short-circuit 200.
 #      If force_regenerate=True, delete existing future entries.
-#   6. Compute urgency + sessions_per_day.
-#   7. Build the Groq prompt and call the model.
-#   8. Parse the JSON array.
-#   9. Resolve each row's subject_code → subject_id, insert. A
+#   4. Compute urgency + sessions_per_day.
+#   5. Build the Groq prompt and call the model.
+#   6. Parse the JSON array.
+#   7. Resolve each row's subject_code → subject_id, insert. A
 #      failing row is logged and skipped; the batch survives.
-#  10. Respond with how many we wrote.
+#   8. Respond with how many we wrote.
 # ============================================================
-@router.post(
-    "/generate",
-    response_model=TimetableGenerateResponse,
-    summary="Generate a 2-week study timetable",
-)
-def generate_timetable(
-    body: TimetableGenerateRequest,
-    # Auth runs first — bad tokens never reach the body.
-    verified_user_id: str = Depends(verify_bearer_token),
-):
-    # ── STEP 1: identity check ──────────────────────────────
-    # Token says caller is user X; body claims to act as user Y.
-    # We require X == Y or this would be an account-takeover.
-    _enforce_same_user(verified_user_id, body.user_id)
-
+def _generate_timetable_for_user(
+    user_id: str,
+    force_regenerate: bool,
+    exam_dates_override: Optional[Dict[str, str]] = None,
+) -> TimetableGenerateResponse:
     # ── STEP 2: fetch the profile (study window) ────────────
     # `study_start_time` and `study_end_time` are the live column
     # names (NOT `study_hours_start` / `study_hours_end` — see
@@ -715,7 +829,7 @@ def generate_timetable(
             supabase
             .table(PROFILES_TABLE)
             .select("study_start_time, study_end_time")
-            .eq("user_id", verified_user_id)
+            .eq("user_id", user_id)
             .limit(1)
             .execute()
         )
@@ -780,6 +894,9 @@ def generate_timetable(
             },
         )
 
+    # Merge per-student exam_dates from profiles when provided (n8n trigger path).
+    _apply_exam_date_overrides(subjects, exam_dates_override or {})
+
     # ── STEP 4: today + window math ─────────────────────────
     today = _today_utc_date()
     # `today + 14 days` is the LAST day we plan for (inclusive).
@@ -791,13 +908,13 @@ def generate_timetable(
     end_date_str = window_end.strftime(PROMPT_DATE_FORMAT)
 
     # ── STEP 5: check / clear existing entries ──────────────
-    if body.force_regenerate:
+    if force_regenerate:
         # Force-regenerate: delete every entry the caller owns
         # with `scheduled_date >= today`. We keep the past so old
         # records stay intact; only the future gets wiped.
         try:
             supabase.table(ENTRIES_TABLE).delete().eq(
-                "user_id", verified_user_id
+                "user_id", user_id
             ).gte("scheduled_date", today_iso).execute()
         except Exception as e:
             # Failure here is logged but NOT fatal — Groq can
@@ -812,7 +929,7 @@ def generate_timetable(
                 supabase
                 .table(ENTRIES_TABLE)
                 .select("id", count="exact")
-                .eq("user_id", verified_user_id)
+                .eq("user_id", user_id)
                 .gte("scheduled_date", today_iso)
                 .lte("scheduled_date", window_end_iso)
                 .execute()
@@ -1035,7 +1152,7 @@ def generate_timetable(
 
         payload = {
             # The authenticated student — never trust the body.
-            "user_id": verified_user_id,
+            "user_id": user_id,
             # Resolved by subject_code lookup above.
             "subject_id": subject_row["id"],
             # `topic` is the live DB column name (the spec calls
@@ -1091,6 +1208,102 @@ def generate_timetable(
         entries_saved=saved_count,
         weeks_covered=PLAN_WINDOW_DAYS // 7,
         date_range={"start": today_iso, "end": window_end_iso},
+    )
+
+
+# ============================================================
+# ENDPOINT: POST /timetable/generate
+# ============================================================
+# FLOW
+#   1. Pydantic validates the body. Auth dep verifies the JWT.
+#   2. We enforce token.user_id == body.user_id (anti-spoof).
+#   3. Delegate to _generate_timetable_for_user (shared with n8n trigger).
+# ============================================================
+@router.post(
+    "/generate",
+    response_model=TimetableGenerateResponse,
+    summary="Generate a 2-week study timetable",
+)
+def generate_timetable(
+    body: TimetableGenerateRequest,
+    # Auth runs first — bad tokens never reach the body.
+    verified_user_id: str = Depends(verify_bearer_token),
+):
+    # ── STEP 1: identity check ──────────────────────────────
+    # Token says caller is user X; body claims to act as user Y.
+    # We require X == Y or this would be an account-takeover.
+    _enforce_same_user(verified_user_id, body.user_id)
+
+    # ── STEP 2+: shared generation logic (no profile exam_dates override). ──
+    return _generate_timetable_for_user(
+        verified_user_id,
+        body.force_regenerate,
+        exam_dates_override=None,
+    )
+
+
+# ================================================
+# INTERNAL TRIGGER — called by n8n every Sunday 8am
+# No auth required — uses service role key
+# n8n URL: POST /timetable/trigger-generate
+# No Authorization header needed
+# ================================================
+@router.post(
+    "/trigger-generate",
+    response_model=TimetableTriggerGenerateResponse,
+    summary="Batch-generate timetables for all students (n8n Sunday cron)",
+)
+async def trigger_generate_timetable() -> TimetableTriggerGenerateResponse:
+    # STEP 1 — load every student UUID from profiles (service role).
+    user_ids = _fetch_all_profile_user_ids()
+    total_users = len(user_ids)
+    triggered_count = 0
+    error_count = 0
+
+    # STEP 2 — process each user; one failure must not stop the batch.
+    for uid in user_ids:
+        try:
+            # STEP 2a — study window from profiles (study_start_time, study_end_time).
+            profile_row = _fetch_profile_generation_fields(uid)
+            if not profile_row:
+                error_count += 1
+                continue
+
+            # STEP 2b — exam dates from subjects table (per user_id), not profiles.
+            exam_dates_map = _fetch_user_subject_exam_dates(uid)
+
+            # STEP 2c — regenerate timetable (force=True wipes future entries).
+            result = _generate_timetable_for_user(
+                uid,
+                force_regenerate=True,
+                exam_dates_override=exam_dates_map,
+            )
+
+            # STEP 2d — count success when rows were saved or message confirms OK.
+            if result.entries_saved and result.entries_saved > 0:
+                triggered_count += 1
+            elif "successfully" in (result.message or "").lower():
+                triggered_count += 1
+            else:
+                error_count += 1
+        except HTTPException as exc:
+            print(
+                f"[Timetable] trigger-generate HTTP {exc.status_code} "
+                f"for user {uid!r}"
+            )
+            error_count += 1
+        except Exception as e:
+            print(
+                f"[Timetable] trigger-generate unexpected error for {uid!r}: "
+                f"{type(e).__name__}: {e}"
+            )
+            error_count += 1
+
+    # STEP 3 — summary JSON for n8n monitoring.
+    return TimetableTriggerGenerateResponse(
+        triggered=triggered_count,
+        errors=error_count,
+        total_users=total_users,
     )
 
 
