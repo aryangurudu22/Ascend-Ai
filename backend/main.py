@@ -145,7 +145,12 @@ app.add_middleware(
 
     # Which addresses are allowed to talk to our backend.
     # During development we allow localhost:3001 (our Next.js frontend).
-    allow_origins=["http://localhost:3001"],
+    allow_origins=[
+        "http://localhost:3001",
+        "http://localhost:3000",
+        "https://ascendai.vercel.app",
+        "https://*.vercel.app",
+    ],
 
     # Allow the browser to send login credentials (cookies, auth headers)
     allow_credentials=True,
@@ -641,3 +646,11 @@ def health_check():
         "version": "1.0.0",           # Current version
         "message": "Backend is alive and ready to receive requests"
     }
+
+
+@app.get("/health")
+def health_check():
+    # Simple health check endpoint
+    # Called by UptimeRobot every 5 minutes
+    # Prevents Render free tier from sleeping
+    return {"status": "ok", "service": "AscendAI Backend"}
