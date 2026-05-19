@@ -11,6 +11,8 @@ import ConditionalNavbar from "./components/ConditionalNavbar";
 import FloatingChat from "./components/FloatingChat";
 import PWARegister from "./components/PWARegister";
 import PWAInstallBanner from "./components/PWAInstallBanner";
+import PageTransition from "@/app/components/PageTransition";
+import PageWrapper from "@/app/components/PageWrapper";
 
 // Playfair Display — headings (Cambridge prestige feel)
 const playfair = Playfair_Display({
@@ -60,6 +62,8 @@ export default function RootLayout({ children }) {
     >
       <body className={`${inter.className} antialiased`}>
         <ThemeProvider>
+          {/* Route transition — top progress bar + slow-load overlay */}
+          <PageTransition />
           {/* Service worker — offline app-shell caching */}
           <PWARegister />
           {/* Film grain — sits above page content, non-interactive */}
@@ -69,7 +73,9 @@ export default function RootLayout({ children }) {
           <FloatingChat />
           {/* Install prompt when browser supports Add to Home Screen */}
           <PWAInstallBanner />
-          <main>{children}</main>
+          <PageWrapper>
+            <main>{children}</main>
+          </PageWrapper>
         </ThemeProvider>
       </body>
     </html>

@@ -13,7 +13,7 @@
 #       student's current page context.
 #     • Calls Groq (llama-3.3-70b-versatile) with optional
 #       conversation_history for multi-turn chat.
-#     • Returns { "response": "<text>", "error": null }.
+#     • Returns { "reply", "suggestions", "error": null }.
 #
 #   GET /chat/history
 #     • Returns the last 20 chat_messages for the caller.
@@ -25,6 +25,7 @@
 #     service-role client.
 # ============================================================
 
+import json
 import os
 from typing import List, Optional
 
@@ -176,7 +177,10 @@ class ChatMessageRequest(BaseModel):
 class ChatMessageResponse(BaseModel):
     """JSON body returned by /chat/message on success."""
 
-    response: str
+    reply: str
+    suggestions: List[str] = Field(default_factory=list)
+    conversation_id: Optional[str] = None
+    message_id: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -508,17 +512,73 @@ HOW TO RESPOND INSTEAD:
             detail={"error": "AI service unavailable. Please try again."},
         )
 
-    assistant_text = raw_text.strip()
+    ai_reply_text = raw_text.strip()
 
     # Persist the assistant reply after Groq succeeds.
     _insert_chat_message(
         user_id=verified_user_id,
         role="assistant",
-        content=assistant_text,
+        content=ai_reply_text,
         current_page=current_page,
     )
 
-    return ChatMessageResponse(response=assistant_text, error=None)
+    # Generate contextual follow-up suggestions
+    # based on the actual reply just given
+    try:
+        suggestion_response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """You generate exactly 3 short 
+follow-up questions a Cambridge AS Level student would 
+naturally ask after reading the given reply.
+
+Rules:
+- Questions must be directly related to what was just said
+- Each question builds naturally on the reply content
+- Maximum 8 words per question
+- No question marks needed
+- Return ONLY a JSON array of 3 strings
+- No markdown, no explanation, no preamble
+- Example: ["Define ceteris paribus", "Give a real example", "How does this appear in exams"]""",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Reply was: {ai_reply_text[:500]}\n\n"
+                        "Generate 3 follow-up questions."
+                    ),
+                },
+            ],
+            max_tokens=100,
+            temperature=0.7,
+        )
+
+        raw = suggestion_response.choices[0].message.content.strip()
+        # Remove any markdown fences if present
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        suggestions = json.loads(raw)
+        # Validate it is a list of 3 strings
+        if not isinstance(suggestions, list) or len(suggestions) != 3:
+            raise ValueError("Invalid suggestions format")
+
+    except Exception as e:
+        print(f"[Chat] suggestions failed: {e}")
+        # Safe fallback suggestions
+        suggestions = [
+            "Can you give an example",
+            "How does this appear in exams",
+            "Explain this more simply",
+        ]
+
+    return ChatMessageResponse(
+        reply=ai_reply_text,
+        suggestions=suggestions,
+        conversation_id=None,
+        message_id=None,
+        error=None,
+    )
 
 
 @router.get(

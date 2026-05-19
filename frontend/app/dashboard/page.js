@@ -15,6 +15,7 @@ import { motion, useInView } from "framer-motion";
 import { supabase } from "../../lib/supabaseClient";
 import { SUBJECTS } from "../../lib/subjects";
 import SubjectBadge from "../components/SubjectBadge";
+import GuidedTour from "../components/GuidedTour";
 import {
   wordPullUp,
   fadeIn,
@@ -534,6 +535,109 @@ async function fetchDashboardData(userId, token, weekStart, weekEnd) {
   return { entries, notes, homeworkRows, weekStart, weekEnd };
 }
 
+/** Critical path — timetable entries for the current week only */
+async function fetchTimetableEntries(userId, token, weekStart, weekEnd) {
+  const entriesUrl =
+    `${API_URL}/timetable/entries` +
+    `?user_id=${encodeURIComponent(userId)}` +
+    `&week_start=${encodeURIComponent(weekStart)}` +
+    `&week_end=${encodeURIComponent(weekEnd)}`;
+
+  const entriesBody = await fetch(entriesUrl, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  })
+    .then(async (res) => {
+      const data = res.ok ? await res.json().catch(() => null) : null;
+      console.log("[Dashboard Timetable] response status:", res.status);
+      console.log("[Dashboard Timetable] entries:", data);
+      return data;
+    })
+    .catch(() => null);
+
+  const rawEntries = Array.isArray(entriesBody?.data)
+    ? entriesBody.data
+    : [];
+  const entries = rawEntries
+    .map(normalizeEntry)
+    .filter(Boolean)
+    .sort(
+      (a, b) =>
+        a.date.localeCompare(b.date) ||
+        (a.start_time || "").localeCompare(b.start_time || ""),
+    );
+
+  return { entries, weekStart, weekEnd };
+}
+
+/** Critical path — latest three notes for the dashboard cards */
+async function fetchLatestNotes(userId, token) {
+  const notesParams = new URLSearchParams({
+    user_id: userId,
+    limit: "3",
+    offset: "0",
+  });
+
+  const notesBody = await fetch(
+    `${API_URL}/notes/list?${notesParams.toString()}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    },
+  )
+    .then(async (r) => {
+      if (!r.ok) {
+        console.warn("[Dashboard] notes/list HTTP", r.status);
+        return null;
+      }
+      return r.json().catch(() => null);
+    })
+    .catch((err) => {
+      console.warn("[Dashboard] notes/list fetch failed:", err);
+      return null;
+    });
+
+  const notes = Array.isArray(notesBody?.data) ? notesBody.data : [];
+  console.log("[Dashboard] Notes fetched:", notes);
+  console.log("[Dashboard] Notes count:", notes?.length);
+  return notes;
+}
+
+/** Secondary — homework history for stats (deferred after first paint) */
+async function fetchHomeworkHistory(token) {
+  const homeworkBody = await fetch(`${API_URL}/homework/history`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  })
+    .then(async (r) => (r.ok ? r.json().catch(() => null) : null))
+    .catch(() => null);
+
+  return Array.isArray(homeworkBody?.data)
+    ? homeworkBody.data
+    : Array.isArray(homeworkBody)
+      ? homeworkBody
+      : [];
+}
+
+/** Secondary — total questions asked from Supabase row counts */
+async function fetchQuestionsAskedCount(userId) {
+  const [{ count: hwCount }, { count: essayCount }] = await Promise.all([
+    supabase
+      .from("homework_questions")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId),
+    supabase
+      .from("essay_checks")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId),
+  ]);
+
+  return (hwCount || 0) + (essayCount || 0);
+}
+
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // MAIN COMPONENT
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -599,6 +703,9 @@ export default function DashboardPage() {
   // showAccordionHint — first-visit hint below feature accordion cards
   const [showAccordionHint, setShowAccordionHint] = useState(false);
 
+  // showTour — guided onboarding overlay for first-time dashboard visitors
+  const [showTour, setShowTour] = useState(false);
+
   // notesInView ref â€” triggers stagger animation when notes scroll into view
   const notesSectionRef = useRef(null);
   const notesInView = useInView(notesSectionRef, { once: true, margin: "-40px" });
@@ -625,6 +732,16 @@ export default function DashboardPage() {
     if (!shown) setShowAccordionHint(true);
   }, []);
 
+  // First visit only — start guided tour after dashboard finishes loading.
+  useEffect(() => {
+    if (loading) return;
+    const seen = localStorage.getItem("ascendai-tour-seen");
+    if (!seen) {
+      const timer = setTimeout(() => setShowTour(true), 800);
+      return () => clearTimeout(timer);
+    }
+  }, [loading]);
+
   // Auto-hide accordion hint after 4s and persist dismissal in localStorage.
   useEffect(() => {
     if (!showAccordionHint) return;
@@ -639,6 +756,8 @@ export default function DashboardPage() {
   // Trigger: mount. Purpose: verify session, load exam dates, fetch
   // timetable/notes/homework, then render the mockup layout.
   useEffect(() => {
+    let secondaryTimerId = null;
+
     const init = async () => {
       const { data: { session } } = await supabase.auth.getSession();
 
@@ -656,7 +775,6 @@ export default function DashboardPage() {
       }
 
       setUser(authUser);
-      await ensureProfileExists(authUser);
 
       if (localStorage.getItem(ONBOARDING_KEY) !== "true") {
         router.replace("/onboarding/welcome");
@@ -684,62 +802,68 @@ export default function DashboardPage() {
 
       const token = session.access_token;
 
-      // Exam intelligence — enhances countdown; empty array keeps simple fallback
-      if (token) {
-        const intelRows = await fetchExamIntelligence(session);
-        setExamIntelligence(intelRows);
-        if (intelRows.length > 0) {
-          setExamDates((prev) => {
-            const merged = { ...prev };
-            for (const row of intelRows) {
-              if (row.exam_date) merged[row.subject] = row.exam_date;
-            }
-            return merged;
-          });
-        }
-
-      }
-
+      // STEP 1 — critical data in parallel, then show dashboard immediately
       if (token && authUser.id) {
         const { weekStart, weekEnd } = getWeekDates();
-        const {
-          entries,
-          notes,
-          homeworkRows: hw,
-          weekStart: fetchedWeekStart,
-          weekEnd: fetchedWeekEnd,
-        } = await fetchDashboardData(authUser.id, token, weekStart, weekEnd);
 
-        setWeekEntries(entries);
-        console.log("[Dashboard] Notes fetched:", notes);
-        console.log("[Dashboard] Notes count:", notes?.length);
-        setLatestNotes(notes);
-        setHomeworkRows(hw);
-        setWeekBounds({ start: fetchedWeekStart, end: fetchedWeekEnd });
+        const [timetableData, notesData] = await Promise.all([
+          fetchTimetableEntries(authUser.id, token, weekStart, weekEnd),
+          fetchLatestNotes(authUser.id, token),
+        ]);
 
-        const { count: hwCount } = await supabase
-          .from("homework_questions")
-          .select("*", { count: "exact", head: true })
-          .eq("user_id", authUser.id);
-
-        const { count: essayCount } = await supabase
-          .from("essay_checks")
-          .select("*", { count: "exact", head: true })
-          .eq("user_id", authUser.id);
-
-        setQuestionsAsked((hwCount || 0) + (essayCount || 0));
+        setWeekEntries(timetableData.entries);
+        setLatestNotes(notesData);
+        setWeekBounds({
+          start: timetableData.weekStart,
+          end: timetableData.weekEnd,
+        });
 
         const initialChecked = {};
-        for (const e of entries) {
+        for (const e of timetableData.entries) {
           if (e.is_completed) initialChecked[e.id] = true;
         }
         setCheckedSessions(initialChecked);
       }
 
       setLoading(false);
+
+      // STEP 2 — secondary fetches after dashboard is visible (non-blocking)
+      secondaryTimerId = setTimeout(async () => {
+        ensureProfileExists(authUser);
+
+        if (!token || !authUser.id) return;
+
+        try {
+          const [intelRows, hw, questionsTotal] = await Promise.all([
+            fetchExamIntelligence(session),
+            fetchHomeworkHistory(token),
+            fetchQuestionsAskedCount(authUser.id),
+          ]);
+
+          setExamIntelligence(intelRows);
+          if (intelRows.length > 0) {
+            setExamDates((prev) => {
+              const merged = { ...prev };
+              for (const row of intelRows) {
+                if (row.exam_date) merged[row.subject] = row.exam_date;
+              }
+              return merged;
+            });
+          }
+
+          setHomeworkRows(hw);
+          setQuestionsAsked(questionsTotal);
+        } catch (err) {
+          console.warn("[Dashboard] Secondary data load failed:", err);
+        }
+      }, 100);
     };
 
     init();
+
+    return () => {
+      if (secondaryTimerId) clearTimeout(secondaryTimerId);
+    };
   }, [router]);
 
   // ── Effect: critical banner visibility (dismiss resets next calendar day) ──
@@ -788,12 +912,32 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <motion.div
-        className="min-h-screen flex items-center justify-center"
-        style={{ background: "var(--bg)", color: "var(--gold)" }}
+        className="min-h-screen flex flex-col items-center justify-center"
+        style={{ background: "var(--bg)", gap: "16px" }}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
+        aria-busy="true"
       >
-        Loading dashboard...
+        <div
+          style={{
+            fontFamily: "'Playfair Display', serif",
+            fontSize: "28px",
+            color: "var(--gold)",
+            letterSpacing: "0.02em",
+          }}
+        >
+          AscendAI
+        </div>
+        <div
+          style={{
+            width: "28px",
+            height: "28px",
+            border: "2px solid var(--gold-border-hover)",
+            borderTop: "2px solid var(--gold)",
+            borderRadius: "50%",
+            animation: "spin 0.8s linear infinite",
+          }}
+        />
       </motion.div>
     );
   }
@@ -928,12 +1072,16 @@ export default function DashboardPage() {
     ...cardDepthStyle,
   };
 
-  // Full-width This Week stats bar (between accordion and two-column grid)
+  // Full-width This Week stats grid (header row sits in parent section)
   const weekStatsBarStyle = {
-    margin: "0 var(--page-padding) 16px",
     display: "grid",
     gridTemplateColumns: "1fr 1fr 1fr",
     gap: "12px",
+  };
+
+  // Wrapper for weekly stats + View Analytics link
+  const weekStatsSectionStyle = {
+    margin: "0 var(--page-padding) 16px",
   };
 
   const weekStatCardStyle = {
@@ -1172,7 +1320,7 @@ export default function DashboardPage() {
       )}
 
       {/* SECTION 1 — HERO GREETING */}
-      <header className="dashboard-hero" style={heroWrapStyle}>
+      <header id="tour-greeting" className="dashboard-hero" style={heroWrapStyle}>
         <p style={heroDateStyle}>{formatHeroDateUpper()}</p>
 
         <h1 style={greetingStyle} className="dashboard-greeting" aria-label="Greeting">
@@ -1215,6 +1363,7 @@ export default function DashboardPage() {
 
       {/* â•â•â• SECTION 2 â€” FEATURE ACCORDION â•â•â• */}
       <div
+        id="tour-accordion"
         className="feature-accordion"
         style={accordionWrapStyle}
         role="navigation"
@@ -1348,7 +1497,46 @@ export default function DashboardPage() {
       )}
 
       {/* â•â•â• SECTION 3 â€” TWO COLUMN + LATEST NOTES â•â•â• */}
-      <div className="dashboard-week-stats" style={weekStatsBarStyle}>
+      <section
+        style={weekStatsSectionStyle}
+        aria-label="This week statistics"
+      >
+        <motion.div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "12px",
+          }}
+        >
+          <h2
+            style={{
+              fontFamily: "'Playfair Display', serif",
+              fontSize: "19px",
+              color: "var(--text)",
+              fontWeight: 700,
+              margin: 0,
+            }}
+          >
+            This Week
+          </h2>
+          <button
+            type="button"
+            onClick={() => router.push("/analytics")}
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: "12px",
+              color: "var(--gold)",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              padding: 0,
+            }}
+          >
+            View Analytics →
+          </button>
+        </motion.div>
+        <div id="tour-stats" className="dashboard-week-stats" style={weekStatsBarStyle}>
         <div style={weekStatCardStyle}>
           <span style={weekStatLabelStyle}>Study Sessions</span>
           <span style={weekStatValueStyle}>
@@ -1363,48 +1551,13 @@ export default function DashboardPage() {
           <span style={weekStatLabelStyle}>Questions Asked</span>
           <span style={weekStatValueStyle}>{questionsAsked}</span>
         </div>
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          gap: 20,
-          flexWrap: "wrap",
-          marginTop: 8,
-          marginBottom: 4,
-        }}
-      >
-        <Link
-          href="/analytics"
-          style={{
-            fontFamily: "Inter, sans-serif",
-            fontSize: 12,
-            color: "var(--gold)",
-            textDecoration: "none",
-            cursor: "pointer",
-          }}
-        >
-          View detailed analytics →
-        </Link>
-        <Link
-          href="/syllabus"
-          style={{
-            fontFamily: "Inter, sans-serif",
-            fontSize: 12,
-            color: "var(--gold)",
-            textDecoration: "none",
-            cursor: "pointer",
-          }}
-        >
-          View Syllabus →
-        </Link>
-      </div>
+        </div>
+      </section>
 
       <div style={mainContentStyle}>
         <div className="dashboard-two-col" style={twoColStyle}>
         <div className="dashboard-left-col" style={leftColStyle}>
-        <section style={sessionsCardStyle}>
+        <section id="tour-sessions" style={sessionsCardStyle}>
           <motion.div
             style={{ height: "auto", alignSelf: "start" }}
             initial={{ opacity: 0, y: 12 }}
@@ -1873,19 +2026,44 @@ export default function DashboardPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.15 }}
           >
-                        <h3
+            <motion.div
               style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: "11px",
-                fontWeight: 500,
-                letterSpacing: "0.1em",
-                color: "var(--date-color)",
-                textTransform: "uppercase",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
                 marginBottom: "14px",
               }}
             >
-              Exam Countdown
-            </h3>
+              <h3
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "11px",
+                  fontWeight: 500,
+                  letterSpacing: "0.1em",
+                  color: "var(--date-color)",
+                  textTransform: "uppercase",
+                  margin: 0,
+                }}
+              >
+                Exam Countdown
+              </h3>
+              <button
+                type="button"
+                onClick={() => router.push("/syllabus")}
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "12px",
+                  color: "var(--gold)",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: 0,
+                  flexShrink: 0,
+                }}
+              >
+                View Syllabus →
+              </button>
+            </motion.div>
             {useExamIntelligence
               ? examIntelligence.map((row, idx) => {
                   const isLast = idx === examIntelligence.length - 1;
@@ -2063,6 +2241,15 @@ export default function DashboardPage() {
 
 
       </div>
+
+      {showTour ? (
+        <GuidedTour
+          onClose={() => {
+            setShowTour(false);
+            localStorage.setItem("ascendai-tour-seen", "true");
+          }}
+        />
+      ) : null}
     </motion.div>
   );
 }

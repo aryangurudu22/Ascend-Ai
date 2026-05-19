@@ -64,99 +64,6 @@ const QUICK_CHIPS = [
   "What should I study today?",
 ];
 
-// generateSuggestions — picks follow-up chips from the last 10 messages.
-const generateSuggestions = (messages) => {
-  // Get last 10 messages as context
-  const recentMessages = messages.slice(-10);
-  const contextText = recentMessages
-    .map((m) => m.content || m.text || "")
-    .join(" ")
-    .toLowerCase();
-
-  // Economics topics
-  if (
-    contextText.includes("elastic") ||
-    contextText.includes("ped") ||
-    contextText.includes("demand") ||
-    contextText.includes("supply") ||
-    contextText.includes("market") ||
-    contextText.includes("price")
-  ) {
-    return [
-      "Give me an exam question on this",
-      "What are common mistakes here?",
-      "How does this link to total revenue?",
-    ];
-  }
-
-  // Business topics
-  if (
-    contextText.includes("motivation") ||
-    contextText.includes("maslow") ||
-    contextText.includes("herzberg") ||
-    contextText.includes("leadership") ||
-    contextText.includes("management")
-  ) {
-    return [
-      "Compare the motivation theories",
-      "Give me a business case study",
-      "What do Cambridge examiners look for?",
-    ];
-  }
-
-  // English topics
-  if (
-    contextText.includes("tone") ||
-    contextText.includes("language") ||
-    contextText.includes("writer") ||
-    contextText.includes("narrative") ||
-    contextText.includes("imagery")
-  ) {
-    return [
-      "Give me a CLS framework example",
-      "How do I analyse tone effectively?",
-      "What makes a Band 4 English answer?",
-    ];
-  }
-
-  // ICT topics
-  if (
-    contextText.includes("database") ||
-    contextText.includes("network") ||
-    contextText.includes("software") ||
-    contextText.includes("hardware") ||
-    contextText.includes("system")
-  ) {
-    return [
-      "Give me an ICT exam question",
-      "Explain this with a real example",
-      "What are the key terms to remember?",
-    ];
-  }
-
-  // Study and revision
-  if (
-    contextText.includes("study") ||
-    contextText.includes("revision") ||
-    contextText.includes("exam") ||
-    contextText.includes("timetable") ||
-    contextText.includes("session")
-  ) {
-    return [
-      "How do I revise this topic effectively?",
-      "Which past papers cover this?",
-      "What should I prioritise this week?",
-    ];
-  }
-
-  // Default — always relevant
-  return [
-    "Give me an exam question on this",
-    "Explain it more simply",
-    "How does this appear in Cambridge exams?",
-  ];
-};
-
 // Panel entrance/exit animation (matches animations.js ease curve).
 const panelMotion = {
   initial: { opacity: 0, scale: 0.95, y: 12 },
@@ -365,22 +272,20 @@ export default function FloatingChat() {
           throw new Error(message);
         }
 
-        // Step 6: append AI response.
+        // Step 6: append AI response and backend follow-up chips.
         const data = await res.json();
-        const aiResponseText =
-          data.response || "I could not generate a reply. Please try again.";
-        setMessages((prev) => {
-          const updatedMessages = [
-            ...prev,
-            {
-              id: `assistant-${Date.now()}`,
-              role: "assistant",
-              content: aiResponseText,
-            },
-          ];
-          setSuggestions(generateSuggestions(updatedMessages));
-          return updatedMessages;
-        });
+        const replyText =
+          data.reply || "I could not generate a reply. Please try again.";
+        const newSuggestions = data.suggestions || [];
+        setSuggestions(newSuggestions);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `assistant-${Date.now()}`,
+            role: "assistant",
+            content: replyText,
+          },
+        ]);
       } catch (err) {
         const errorAssistantText =
           err instanceof Error
@@ -395,7 +300,6 @@ export default function FloatingChat() {
               content: errorAssistantText,
             },
           ];
-          setSuggestions(generateSuggestions(updatedMessages));
           // POST failed — persist locally so the thread is not lost offline.
           backupToLocalStorage(updatedMessages);
           return updatedMessages;
@@ -728,6 +632,7 @@ export default function FloatingChat() {
       {/* Floating bubble — toggles panel */}
       <motion.button
         type="button"
+        id="tour-chat"
         aria-label={isOpen ? "Close chat" : "Open chat"}
         className="floating-chat-bubble"
         onClick={() => setIsOpen((prev) => !prev)}

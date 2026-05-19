@@ -32,10 +32,11 @@ const iconButtonBase = {
 };
 
 // Circular nav control with hover lift.
-function NavIconButton({ ariaLabel, onClick, children, style = {}, className = "" }) {
+function NavIconButton({ ariaLabel, onClick, children, style = {}, className = "", id }) {
   return (
     <motion.button
       type="button"
+      id={id}
       aria-label={ariaLabel}
       onClick={onClick}
       className={className}
@@ -357,6 +358,7 @@ export default function Navbar() {
 
         <motion.div className="flex items-center gap-1.5 md:gap-2">
           <NavIconButton
+            id="tour-search"
             ariaLabel="Search"
             className="hidden md:flex"
             onClick={() => {
@@ -373,6 +375,7 @@ export default function Navbar() {
           {/* Notifications bell + dropdown */}
           <motion.div ref={notifWrapRef} style={{ position: "relative" }}>
             <NavIconButton
+              id="tour-bell"
               ariaLabel="Notifications"
               onClick={() => {
                 setNotifOpen((v) => !v);
@@ -670,6 +673,7 @@ export default function Navbar() {
 
           <motion.div ref={profileRef} style={{ position: "relative", display: "inline-flex" }}>
             <NavIconButton
+              id="tour-profile"
               ariaLabel="Profile menu"
               onClick={() => setProfileOpen((prev) => !prev)}
             >
