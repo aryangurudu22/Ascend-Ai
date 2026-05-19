@@ -150,6 +150,7 @@ app.add_middleware(
         "http://localhost:3000",
         "https://ascendai.vercel.app",
         "https://*.vercel.app",
+        "https://ascend-ai-backend-e95r.onrender.com",
     ],
 
     # Allow the browser to send login credentials (cookies, auth headers)
