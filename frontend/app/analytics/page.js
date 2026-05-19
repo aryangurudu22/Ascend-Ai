@@ -8,6 +8,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion, useInView } from "framer-motion";
 import { supabase } from "@/lib/supabaseClient";
 import { SUBJECTS, getSubjectByKey } from "@/lib/subjects";
@@ -87,6 +88,8 @@ function ActivityIcon({ type }) {
 }
 
 export default function AnalyticsPage() {
+  const router = useRouter();
+
   // period — API window: week | month | all (driven by period tabs).
   const [period, setPeriod] = useState("week");
 
@@ -190,6 +193,14 @@ export default function AnalyticsPage() {
     summary.questions_asked === 0 &&
     summary.flashcard_sessions === 0 &&
     summary.papers_solved === 0;
+
+  // allZero — every headline metric is zero; show helpful CTA below stats.
+  const allZero =
+    summary &&
+    summary.questions_asked === 0 &&
+    summary.flashcard_sessions === 0 &&
+    summary.papers_solved === 0 &&
+    summary.avg_quiz_score === 0;
 
   const statCards = [
     {
@@ -353,6 +364,76 @@ export default function AnalyticsPage() {
           </div>
         ))}
       </div>
+
+      {allZero && (
+        <motion.div
+          style={{
+            margin: "0 var(--page-padding)",
+            padding: "16px 20px",
+            background: "var(--nav-icon-bg)",
+            border: "0.5px solid var(--nav-icon-border)",
+            borderRadius: "8px",
+            textAlign: "center",
+          }}
+        >
+          <p
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: "13px",
+              color: "var(--text-muted)",
+              margin: "0 0 4px",
+            }}
+          >
+            Your analytics will build up as you study
+          </p>
+          <p
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: "12px",
+              color: "var(--text-extra-dim)",
+              margin: 0,
+            }}
+          >
+            Ask homework questions, complete sessions,
+            and take quizzes to see your progress here
+          </p>
+          <div
+            style={{
+              display: "flex",
+              gap: "16px",
+              justifyContent: "center",
+              marginTop: "12px",
+              flexWrap: "wrap",
+            }}
+          >
+            {[
+              { label: "Ask a question →", path: "/features/homework" },
+              { label: "Open timetable →", path: "/features/timetable" },
+              { label: "Take a quiz →", path: "/features/flashcards" },
+            ].map((link) => (
+              <span
+                key={link.path}
+                role="button"
+                tabIndex={0}
+                onClick={() => router.push(link.path)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    router.push(link.path);
+                  }
+                }}
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "12px",
+                  color: "var(--gold)",
+                  cursor: "pointer",
+                }}
+              >
+                {link.label}
+              </span>
+            ))}
+          </div>
+        </motion.div>
+      )}
 
       {showEmpty ? (
         <motion.div

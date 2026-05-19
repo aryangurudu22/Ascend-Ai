@@ -3711,21 +3711,66 @@ export default function PastPapersPage() {
           <PaperCardSkeleton />
         </section>
       ) : !hasPapers ? (
-        <section aria-label="No past papers yet" style={{ margin: "16px var(--page-padding) 48px", textAlign: "center" }}>
-          <Upload size={32} color="var(--gold-icon)" aria-hidden style={{ margin: "0 auto 16px", display: "block" }} />
-          <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: "16px", color: "var(--text)", margin: 0 }}>No papers yet</h2>
-          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-muted)", marginTop: "8px" }}>
-            Upload a Cambridge past paper to get started
+        <div
+          aria-label="No past papers yet"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "48px 24px",
+            margin: "20px var(--page-padding)",
+            background: "var(--card)",
+            border: "0.5px solid var(--gold-border)",
+            borderRadius: "10px",
+            textAlign: "center",
+          }}
+        >
+          <svg
+            width="36"
+            height="36"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--gold-icon)"
+            strokeWidth="1.5"
+            aria-hidden
+          >
+            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+          </svg>
+          <h3
+            style={{
+              fontFamily: "'Playfair Display', serif",
+              fontSize: "18px",
+              color: "var(--text)",
+              fontWeight: 700,
+              marginTop: "14px",
+              marginBottom: "8px",
+            }}
+          >
+            No past papers yet
+          </h3>
+          <p
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: "13px",
+              color: "var(--text-muted)",
+              maxWidth: "320px",
+              lineHeight: 1.6,
+              marginBottom: "20px",
+            }}
+          >
+            Upload a Cambridge past paper and get a complete
+            AI-generated model answer in minutes
           </p>
           <button
             type="button"
             onClick={() => setUploadOpen(true)}
             style={{
-              marginTop: "20px",
               background: "var(--gold)",
               border: "none",
               borderRadius: "8px",
-              padding: "10px 18px",
+              padding: "10px 24px",
               fontFamily: "Inter, sans-serif",
               fontSize: "13px",
               fontWeight: 500,
@@ -3733,9 +3778,9 @@ export default function PastPapersPage() {
               cursor: "pointer",
             }}
           >
-            Upload Paper
+            Upload Your First Paper
           </button>
-        </section>
+        </div>
       ) : (
         <section aria-label="Papers list" style={{ margin: "16px var(--page-padding) 32px", display: "flex", flexDirection: "column", gap: "8px" }}>
           {listPapers.length === 0 ? (

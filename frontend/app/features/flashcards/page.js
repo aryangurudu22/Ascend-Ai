@@ -860,28 +860,61 @@ function SkeletonSubjectCard() {
   );
 }
 
-function SubjectEmptyPrompt({ onGenerate }) {
+// SubjectEmptyPrompt: guidance panel when a subject card has zero flashcards.
+function SubjectEmptyPrompt() {
+  const router = useRouter(); // hook so the CTA can navigate to Notes
   return (
-    <div style={{ marginTop: "auto", textAlign: "center" }}>
-      <p style={{ fontFamily: "Inter, sans-serif", fontSize: "12px", color: "var(--text-muted)", marginBottom: "10px" }}>
-        No cards yet for this subject
+    <div
+      style={{
+        marginTop: "auto", // anchor panel at bottom of the subject card column
+        background: "var(--card-hover)", // subtle panel fill from design tokens
+        border: "0.5px dashed var(--gold-dim)", // dashed gold outline (0.3 opacity)
+        borderRadius: "8px", // rounded panel corners
+        padding: "16px", // inner spacing around copy and button
+        textAlign: "center", // centre all guidance text
+      }}
+    >
+      <p
+        style={{
+          fontFamily: "Inter, sans-serif", // body font per spec
+          fontSize: "13px", // primary empty-state headline size
+          color: "var(--text)", // primary text colour
+          fontWeight: 500, // medium weight headline
+          margin: 0, // reset default paragraph margin
+        }}
+      >
+        No cards yet
+      </p>
+      <p
+        style={{
+          fontFamily: "Inter, sans-serif", // body font for helper copy
+          fontSize: "12px", // secondary guidance text size
+          color: "var(--text-muted)", // muted helper colour
+          marginTop: "4px", // small gap below headline
+          marginBottom: 0, // no extra space before button
+        }}
+      >
+        Go to Notes and click Generate Cards
+        <br />
+        on any note to create flashcards
       </p>
       <button
         type="button"
-        onClick={onGenerate}
+        onClick={() => router.push("/features/notes")} // send student to Notes feature
         style={{
-          background: "var(--gold)",
-          border: "none",
-          borderRadius: "6px",
-          padding: "8px 14px",
-          fontFamily: "Inter, sans-serif",
-          fontSize: "12px",
-          fontWeight: 500,
-          color: "var(--bg)",
-          cursor: "pointer",
+          background: "var(--gold)", // gold CTA fill
+          border: "none", // flat button without border
+          borderRadius: "6px", // slightly rounded button
+          padding: "7px 16px", // compact button padding per spec
+          marginTop: "10px", // space above button below helper text
+          fontFamily: "Inter, sans-serif", // button label font
+          fontSize: "12px", // button label size
+          fontWeight: 500, // medium weight label
+          color: "var(--bg)", // dark text on gold background
+          cursor: "pointer", // hand cursor on hover
         }}
       >
-        Generate Cards
+        Go to Notes →
       </button>
     </div>
   );
@@ -2899,7 +2932,7 @@ export default function FlashcardsPage() {
                   </motion.div>
 
                   {empty ? (
-                    <SubjectEmptyPrompt onGenerate={handleGenerateCards} />
+                    <SubjectEmptyPrompt />
                   ) : (
                     <>
                       <MasteryBar

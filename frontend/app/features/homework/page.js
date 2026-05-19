@@ -1448,6 +1448,17 @@ export default function HomeworkPage() {
   const [selectedSubject, setSelectedSubject] = useState(SUBJECTS[0].key);
   const [question, setQuestion] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  // Index into loadingMessages — cycles while Generate Answer is in flight.
+  const [loadingMsgIndex, setLoadingMsgIndex] = useState(0);
+
+  // Rotating status lines shown in the answer panel during generation.
+  const loadingMessages = [
+    "Reading your question...",
+    "Applying Cambridge mark scheme...",
+    "Writing your model answer...",
+    "Adding examiner tips...",
+    "Almost ready...",
+  ];
 
   // Answer state – populated from the backend response.
   const [answer, setAnswer] = useState("");
@@ -1575,6 +1586,20 @@ export default function HomeworkPage() {
   // send the wrong user_id to the backend.
   const currentUserIdRef = useRef(currentUserId);
   useEffect(() => { currentUserIdRef.current = currentUserId; }, [currentUserId]);
+
+  // Cycle loadingMessages every 2s while Generate Answer is running.
+  useEffect(() => {
+    if (!isLoading) {
+      setLoadingMsgIndex(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      setLoadingMsgIndex((prev) =>
+        prev < loadingMessages.length - 1 ? prev + 1 : prev,
+      );
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [isLoading]);
 
   // Load history from localStorage on component mount.
   useEffect(() => {
@@ -2972,19 +2997,40 @@ export default function HomeworkPage() {
                 )}
 
                 {isLoading && !answer ? (
-                  <motion.div
+                  <div
                     style={{
                       display: "flex",
+                      flexDirection: "column",
                       alignItems: "center",
-                      gap: "8px",
-                      color: "var(--text-muted)",
-                      fontFamily: "Inter, sans-serif",
-                      fontSize: "13px",
+                      justifyContent: "center",
+                      height: "100%",
+                      minHeight: "200px",
+                      gap: "16px",
                     }}
                   >
-                    <BtnSpinner color="var(--gold)" />
-                    Generating answer...
-                  </motion.div>
+                    <div
+                      style={{
+                        width: "32px",
+                        height: "32px",
+                        border: "2px solid var(--gold-border-hover)",
+                        borderTop: "2px solid var(--gold)",
+                        borderRadius: "50%",
+                        animation: "spin 1s linear infinite",
+                      }}
+                    />
+                    <p
+                      style={{
+                        fontFamily: "Inter, sans-serif",
+                        fontSize: "13px",
+                        color: "var(--text-muted)",
+                        fontStyle: "italic",
+                        textAlign: "center",
+                        transition: "opacity 0.3s ease",
+                      }}
+                    >
+                      {loadingMessages[loadingMsgIndex]}
+                    </p>
+                  </div>
                 ) : (
                   <AnswerSectionsDisplay text={answer} />
                 )}

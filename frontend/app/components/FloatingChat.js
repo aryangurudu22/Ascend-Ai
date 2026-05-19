@@ -64,6 +64,99 @@ const QUICK_CHIPS = [
   "What should I study today?",
 ];
 
+// generateSuggestions — picks follow-up chips from the last 10 messages.
+const generateSuggestions = (messages) => {
+  // Get last 10 messages as context
+  const recentMessages = messages.slice(-10);
+  const contextText = recentMessages
+    .map((m) => m.content || m.text || "")
+    .join(" ")
+    .toLowerCase();
+
+  // Economics topics
+  if (
+    contextText.includes("elastic") ||
+    contextText.includes("ped") ||
+    contextText.includes("demand") ||
+    contextText.includes("supply") ||
+    contextText.includes("market") ||
+    contextText.includes("price")
+  ) {
+    return [
+      "Give me an exam question on this",
+      "What are common mistakes here?",
+      "How does this link to total revenue?",
+    ];
+  }
+
+  // Business topics
+  if (
+    contextText.includes("motivation") ||
+    contextText.includes("maslow") ||
+    contextText.includes("herzberg") ||
+    contextText.includes("leadership") ||
+    contextText.includes("management")
+  ) {
+    return [
+      "Compare the motivation theories",
+      "Give me a business case study",
+      "What do Cambridge examiners look for?",
+    ];
+  }
+
+  // English topics
+  if (
+    contextText.includes("tone") ||
+    contextText.includes("language") ||
+    contextText.includes("writer") ||
+    contextText.includes("narrative") ||
+    contextText.includes("imagery")
+  ) {
+    return [
+      "Give me a CLS framework example",
+      "How do I analyse tone effectively?",
+      "What makes a Band 4 English answer?",
+    ];
+  }
+
+  // ICT topics
+  if (
+    contextText.includes("database") ||
+    contextText.includes("network") ||
+    contextText.includes("software") ||
+    contextText.includes("hardware") ||
+    contextText.includes("system")
+  ) {
+    return [
+      "Give me an ICT exam question",
+      "Explain this with a real example",
+      "What are the key terms to remember?",
+    ];
+  }
+
+  // Study and revision
+  if (
+    contextText.includes("study") ||
+    contextText.includes("revision") ||
+    contextText.includes("exam") ||
+    contextText.includes("timetable") ||
+    contextText.includes("session")
+  ) {
+    return [
+      "How do I revise this topic effectively?",
+      "Which past papers cover this?",
+      "What should I prioritise this week?",
+    ];
+  }
+
+  // Default — always relevant
+  return [
+    "Give me an exam question on this",
+    "Explain it more simply",
+    "How does this appear in Cambridge exams?",
+  ];
+};
+
 // Panel entrance/exit animation (matches animations.js ease curve).
 const panelMotion = {
   initial: { opacity: 0, scale: 0.95, y: 12 },
@@ -93,6 +186,13 @@ export default function FloatingChat() {
 
   // isMobile — panel uses full-width layout below 768px.
   const [isMobile, setIsMobile] = useState(false);
+
+  // suggestions — contextual chips shown after each assistant reply.
+  const [suggestions, setSuggestions] = useState([
+    "How do I use Past Papers?",
+    "Explain price elasticity",
+    "What should I study today?",
+  ]);
 
   // pathname — current route sent to backend as current_page context.
   const pathname = usePathname();
@@ -267,30 +367,38 @@ export default function FloatingChat() {
 
         // Step 6: append AI response.
         const data = await res.json();
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `assistant-${Date.now()}`,
-            role: "assistant",
-            content: data.response || "I could not generate a reply. Please try again.",
-          },
-        ]);
-      } catch (err) {
+        const aiResponseText =
+          data.response || "I could not generate a reply. Please try again.";
         setMessages((prev) => {
-          const next = [
+          const updatedMessages = [
+            ...prev,
+            {
+              id: `assistant-${Date.now()}`,
+              role: "assistant",
+              content: aiResponseText,
+            },
+          ];
+          setSuggestions(generateSuggestions(updatedMessages));
+          return updatedMessages;
+        });
+      } catch (err) {
+        const errorAssistantText =
+          err instanceof Error
+            ? err.message
+            : "Could not reach AscendAI. Is the backend running?";
+        setMessages((prev) => {
+          const updatedMessages = [
             ...prev,
             {
               id: `err-${Date.now()}`,
               role: "assistant",
-              content:
-                err instanceof Error
-                  ? err.message
-                  : "Could not reach AscendAI. Is the backend running?",
+              content: errorAssistantText,
             },
           ];
+          setSuggestions(generateSuggestions(updatedMessages));
           // POST failed — persist locally so the thread is not lost offline.
-          backupToLocalStorage(next);
-          return next;
+          backupToLocalStorage(updatedMessages);
+          return updatedMessages;
         });
       } finally {
         // Step 7: hide typing indicator.
@@ -481,6 +589,47 @@ export default function FloatingChat() {
                 </motion.div>
               ) : null}
 
+              {/* Contextual chips — after first user message, below last assistant reply */}
+              {messages.length > 0 &&
+                messages[messages.length - 1].role === "assistant" &&
+                !showChips && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: "6px",
+                      padding: "4px 0 8px",
+                    }}
+                  >
+                    {suggestions.map((chip, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        className="floating-chat-context-chip"
+                        disabled={isLoading}
+                        onClick={() => {
+                          setInputText(chip);
+                          setTimeout(() => sendMessage(chip), 100);
+                        }}
+                        style={{
+                          background: "var(--chat-bubble-bg)",
+                          border: "0.5px solid var(--chat-bubble-border)",
+                          borderRadius: "20px",
+                          padding: "5px 12px",
+                          fontFamily: "Inter, sans-serif",
+                          fontSize: "11px",
+                          color: "var(--text-dim)",
+                          cursor: "pointer",
+                          transition: "border-color 150ms",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {chip}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
               {/* Typing indicator while Groq responds */}
               {isLoading ? (
                 <motion.div
@@ -637,6 +786,9 @@ export default function FloatingChat() {
         .floating-chat-chip:hover {
           border-color: var(--gold) !important;
           color: var(--text) !important;
+        }
+        .floating-chat-context-chip:hover:not(:disabled) {
+          border-color: var(--gold) !important;
         }
         .floating-chat-user-msg {
           color: var(--bg);

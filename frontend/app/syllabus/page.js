@@ -228,6 +228,8 @@ export default function SyllabusTrackerPage() {
   const [session, setSession] = useState(null);
   const [uploadStatus, setUploadStatus] = useState(INITIAL_UPLOAD_STATUS);
   const [topicCounts, setTopicCounts] = useState(INITIAL_TOPIC_COUNTS);
+  // showSyllabusBanner — first-visit dismissible info below the page header
+  const [showSyllabusBanner, setShowSyllabusBanner] = useState(false);
   const fileRefs = {
     economics: useRef(null),
     business: useRef(null),
@@ -245,6 +247,12 @@ export default function SyllabusTrackerPage() {
       setSession(s ?? null);
     });
     return () => sub?.subscription?.unsubscribe?.();
+  }, []);
+
+  // First visit only — show syllabus explanation banner if not dismissed before
+  useEffect(() => {
+    const shown = localStorage.getItem("ascendai-syllabus-hint-shown");
+    if (!shown) setShowSyllabusBanner(true);
   }, []);
 
   const fetchTopics = useCallback(
@@ -500,6 +508,66 @@ export default function SyllabusTrackerPage() {
           Track your Cambridge AS Level coverage
         </p>
       </header>
+
+      {showSyllabusBanner && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "12px",
+            margin: "12px var(--page-padding) 0",
+            background: "var(--nav-icon-bg)",
+            border: "0.5px solid var(--nav-icon-border)",
+            borderLeft: "2px solid var(--gold)",
+            borderRadius: "8px",
+            padding: "14px 18px",
+          }}
+        >
+          <span
+            style={{
+              fontSize: "16px",
+              flexShrink: 0,
+              marginTop: "1px",
+            }}
+          >
+            ℹ️
+          </span>
+          <p
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: "13px",
+              color: "var(--text-dim)",
+              lineHeight: 1.6,
+              flex: 1,
+              margin: 0,
+            }}
+          >
+            Tick topics as you cover them to track your
+            Cambridge syllabus progress. Upload your official
+            syllabus PDF to get your exact topic list.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setShowSyllabusBanner(false);
+              localStorage.setItem("ascendai-syllabus-hint-shown", "true");
+            }}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "var(--text-muted)",
+              fontSize: "18px",
+              cursor: "pointer",
+              flexShrink: 0,
+              lineHeight: 1,
+              padding: "0 4px",
+            }}
+            aria-label="Dismiss syllabus hint"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       <nav
         aria-label="Subject filters"

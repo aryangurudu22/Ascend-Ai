@@ -596,6 +596,9 @@ export default function DashboardPage() {
   // isMobile â€” true below 768px for click-to-expand accordion
   const [isMobile, setIsMobile] = useState(false);
 
+  // showAccordionHint — first-visit hint below feature accordion cards
+  const [showAccordionHint, setShowAccordionHint] = useState(false);
+
   // notesInView ref â€” triggers stagger animation when notes scroll into view
   const notesSectionRef = useRef(null);
   const notesInView = useInView(notesSectionRef, { once: true, margin: "-40px" });
@@ -615,6 +618,22 @@ export default function DashboardPage() {
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, []);
+
+  // First visit only — show accordion hover hint if not dismissed before.
+  useEffect(() => {
+    const shown = localStorage.getItem("ascendai-accordion-hint-shown");
+    if (!shown) setShowAccordionHint(true);
+  }, []);
+
+  // Auto-hide accordion hint after 4s and persist dismissal in localStorage.
+  useEffect(() => {
+    if (!showAccordionHint) return;
+    const timer = setTimeout(() => {
+      setShowAccordionHint(false);
+      localStorage.setItem("ascendai-accordion-hint-shown", "true");
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [showAccordionHint]);
 
   // â”€â”€ Effect 1: Auth + onboarding guard + dashboard data â”€â”€â”€â”€â”€
   // Trigger: mount. Purpose: verify session, load exam dates, fetch
@@ -1313,6 +1332,21 @@ export default function DashboardPage() {
         })}
       </div>
 
+      {showAccordionHint && (
+        <p
+          style={{
+            fontFamily: "Inter, sans-serif",
+            fontSize: "11px",
+            color: "var(--text-muted)",
+            textAlign: "center",
+            marginTop: "6px",
+            opacity: 0.7,
+          }}
+        >
+          Hover over the cards to explore features
+        </p>
+      )}
+
       {/* â•â•â• SECTION 3 â€” TWO COLUMN + LATEST NOTES â•â•â• */}
       <div className="dashboard-week-stats" style={weekStatsBarStyle}>
         <div style={weekStatCardStyle}>
@@ -1408,17 +1442,55 @@ export default function DashboardPage() {
             </motion.div>
 
             {todaySessions.length === 0 ? (
-              <p
-                style={{
-                  fontFamily: "Inter, sans-serif",
-                  fontSize: "13px",
-                  color: "var(--text-muted)",
-                  textAlign: "center",
-                  padding: "24px 0",
-                }}
-              >
-                No sessions scheduled for today
-              </p>
+              weekEntries.length === 0 ? (
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: "20px 0",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontFamily: "Inter, sans-serif",
+                      fontSize: "13px",
+                      color: "var(--text-muted)",
+                      marginBottom: "12px",
+                    }}
+                  >
+                    Generate your timetable to see your
+                    study sessions here
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => router.push("/features/timetable")}
+                    style={{
+                      background: "var(--gold)",
+                      border: "none",
+                      borderRadius: "6px",
+                      padding: "8px 18px",
+                      fontFamily: "Inter, sans-serif",
+                      fontSize: "12px",
+                      fontWeight: 500,
+                      color: "var(--bg)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Generate Timetable →
+                  </button>
+                </div>
+              ) : (
+                <p
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: "13px",
+                    color: "var(--text-muted)",
+                    textAlign: "center",
+                    padding: "24px 0",
+                  }}
+                >
+                  No sessions scheduled for today
+                </p>
+              )
             ) : (
               <div style={{ marginBottom: 0, paddingBottom: 0 }}>
               {todaySessions.map((session, idx) => {

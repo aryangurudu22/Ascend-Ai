@@ -318,6 +318,31 @@ export default function ProfilePage() {
     }
   };
 
+  // Remove avatar from Storage and clear avatar_url on profiles.
+  const handleRemovePhoto = async () => {
+    const confirmed = window.confirm(
+      "Remove your profile photo? This cannot be undone.",
+    );
+    if (!confirmed) return;
+
+    try {
+      const fileExt = avatarUrl.split(".").pop().split("?")[0];
+      const filePath = `${session.user.id}/avatar.${fileExt}`;
+
+      await supabase.storage.from("avatars").remove([filePath]);
+
+      await supabase
+        .from("profiles")
+        .update({ avatar_url: null })
+        .eq("user_id", session.user.id);
+
+      setAvatarUrl(null);
+    } catch (err) {
+      console.error("[Profile] Remove photo failed:", err);
+      alert("Could not remove photo. Please try again.");
+    }
+  };
+
   // Save edited display name to profiles table.
   const handleSaveName = async () => {
     if (!userId || !editName.trim()) return;
@@ -613,6 +638,27 @@ export default function ProfilePage() {
             style={{ display: "none" }}
             onChange={handlePhotoUpload}
           />
+
+          {avatarUrl && (
+            <button
+              type="button"
+              onClick={handleRemovePhoto}
+              style={{
+                background: "transparent",
+                border: "none",
+                fontFamily: "Inter, sans-serif",
+                fontSize: "11px",
+                color: "var(--exam-urgent)",
+                cursor: "pointer",
+                marginTop: "6px",
+                display: "block",
+                textAlign: "center",
+                width: "100%",
+              }}
+            >
+              Remove photo
+            </button>
+          )}
         </div>
 
         {/* User info */}

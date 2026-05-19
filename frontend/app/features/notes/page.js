@@ -841,6 +841,11 @@ export default function NotesPage() {
   // `isSyncing` toggles the spinner on the Sync Now button.
   // `toast` shows the bottom-right success/error banner.
   const [isSyncing, setIsSyncing] = useState(false);
+  // `syncToast` drives the centred bottom sync feedback banner.
+  // null | 'success' | 'empty' | 'error'
+  const [syncToast, setSyncToast] = useState(null);
+  // `syncToastMsg` is the human-readable copy shown in that banner.
+  const [syncToastMsg, setSyncToastMsg] = useState("");
   const [toast, setToast] = useState(null);
 
   // ── Flashcard-generation state ────────────────────────────
@@ -1113,6 +1118,13 @@ export default function NotesPage() {
     return () => clearTimeout(handle);
   }, [toast]);
 
+  // Auto-dismiss the centred sync toast after 3 seconds.
+  useEffect(() => {
+    if (!syncToast) return;
+    const timer = setTimeout(() => setSyncToast(null), 3000);
+    return () => clearTimeout(timer);
+  }, [syncToast]);
+
 
   // ───────────────────────────────────────────────────────────
   // HANDLER: handleSync
@@ -1130,6 +1142,8 @@ export default function NotesPage() {
   const handleSync = async () => {
     if (isSyncing) return;
     setIsSyncing(true);
+    // Snapshot note count before sync so we can detect new rows after refetch.
+    const notesCountBefore = notes.length;
 
     try {
       const { data: sessionData, error: sessionError } =
@@ -1154,12 +1168,6 @@ export default function NotesPage() {
       if (!response.ok) {
         throw new Error(`Backend returned HTTP ${response.status}.`);
       }
-
-      setToast({
-        tone: "success",
-        message:
-          "Sync triggered — checking Google Classroom for new posts.",
-      });
 
       const params = new URLSearchParams({
         user_id: userId,
@@ -1188,13 +1196,21 @@ export default function NotesPage() {
           setNotes(noteRows);
           setUsingMock(false);
         }
+        if (noteRows.length > notesCountBefore) {
+          setSyncToastMsg("Notes synced from Google Classroom");
+          setSyncToast("success");
+        } else {
+          setSyncToastMsg("Your notes are up to date");
+          setSyncToast("empty");
+        }
+      } else {
+        setSyncToastMsg("Your notes are up to date");
+        setSyncToast("empty");
       }
     } catch (err) {
       console.warn("[Notes] Sync failed:", err);
-      setToast({
-        tone: "error",
-        message: "Sync failed — please try again.",
-      });
+      setSyncToastMsg("Sync failed — please try again");
+      setSyncToast("error");
     } finally {
       setIsSyncing(false);
     }
@@ -1419,6 +1435,7 @@ export default function NotesPage() {
   // PAGE LAYOUT
   // ───────────────────────────────────────────────────────────
   return (
+    <>
     <motion.main
       className="notes-page"
       style={{ minHeight: "100vh", background: "var(--bg)" }}
@@ -1742,6 +1759,35 @@ export default function NotesPage() {
         </motion.div>
       )}
     </motion.main>
+
+    {syncToast && (
+      <div
+        role="status"
+        aria-live="polite"
+        style={{
+          position: "fixed",
+          bottom: "24px",
+          left: "50%",
+          transform: "translateX(-50%)",
+          background: "var(--card)",
+          border:
+            syncToast === "error"
+              ? "0.5px solid color-mix(in srgb, var(--exam-urgent) 40%, transparent)"
+              : "0.5px solid var(--gold-dim)",
+          borderRadius: "8px",
+          padding: "12px 20px",
+          fontFamily: "Inter, sans-serif",
+          fontSize: "13px",
+          color: syncToast === "error" ? "var(--exam-urgent)" : "var(--text)",
+          zIndex: 1000,
+          whiteSpace: "nowrap",
+          boxShadow: "var(--chat-panel-shadow)",
+        }}
+      >
+        {syncToastMsg}
+      </div>
+    )}
+    </>
   );
 }
 

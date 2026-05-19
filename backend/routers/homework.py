@@ -88,6 +88,7 @@ from pydantic import BaseModel, Field
 #   2. We use supabase.auth.get_user(jwt) to verify any user's
 #      access token (the anon client cannot do this).
 from database import supabase
+from routers.notifications import create_notification
 
 
 # ============================================================
@@ -1651,6 +1652,22 @@ def check_essay(
             f"[Homework] essay_checks insert failed: {type(e).__name__}: {e}. "
             "Run backend/migrations/essay_checks.sql in Supabase if the table is missing."
         )
+
+    try:
+        grade = parsed.get("grade_band", "Unknown")
+        estimated = parsed.get("estimated_marks", 0)
+        create_notification(
+            user_id=verified_user_id,
+            type="essay",
+            title="Essay Checked",
+            message=(
+                f"Your essay scored {grade} — "
+                f"estimated {estimated} marks. "
+                f"View detailed feedback and model answer."
+            ),
+        )
+    except Exception as e:
+        print(f"[Essay] notification failed: {e}")
 
     return EssayCheckResponse(
         grade_band=parsed["grade_band"],

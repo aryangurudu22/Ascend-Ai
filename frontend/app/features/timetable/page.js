@@ -1728,6 +1728,11 @@ export default function TimetablePage() {
   const [contextMenu, setContextMenu] = useState(null);
   // isGenerating tracks the Generate Now button spinner.
   const [isGenerating, setIsGenerating] = useState(false);
+  // generateStatus drives the inline panel below Generate Now:
+  // null | 'loading' | 'success' | 'error'
+  const [generateStatus, setGenerateStatus] = useState(null);
+  // generateMsg holds the success or error copy shown in that panel.
+  const [generateMsg, setGenerateMsg] = useState("");
   // pendingRegenerate flips on after the backend tells us the
   // timetable already exists. The very next "Generate Now" click
   // is sent with force_regenerate=true. This is the "two-click
@@ -2049,23 +2054,20 @@ export default function TimetablePage() {
     const { data: sessionData, error: sessionErr } =
       await supabase.auth.getSession();
     if (sessionErr || !sessionData?.session?.access_token) {
-      setToast({
-        tone: "error",
-        message: "Session expired. Please sign in again.",
-      });
+      setGenerateStatus("error");
+      setGenerateMsg("Could not generate timetable — please try again");
       return;
     }
     const token = sessionData.session.access_token;
     const uid =
       sessionData.session?.user?.id ?? userIdRef.current ?? null;
     if (!uid) {
-      setToast({
-        tone: "error",
-        message: "Session expired. Please sign in again.",
-      });
+      setGenerateStatus("error");
+      setGenerateMsg("Could not generate timetable — please try again");
       return;
     }
 
+    setGenerateStatus("loading");
     setIsGenerating(true);
     // Snapshot the flag so a state flip mid-flight can't change
     // what we sent on the wire. We also clear `pendingRegenerate`
@@ -2086,17 +2088,10 @@ export default function TimetablePage() {
         }),
       });
 
-      // ── 2a. Non-2xx → surface a friendly error toast. ─────
+      // ── 2a. Non-2xx → show error in the inline generate panel. ─
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        const msg =
-          (data?.detail && (data.detail.error || data.detail)) ||
-          (res.status === 401
-            ? "Session expired. Please sign in again."
-            : res.status === 404
-            ? "Please complete onboarding before generating a timetable."
-            : "Could not generate timetable. Please try again.");
-        setToast({ tone: "error", message: String(msg) });
+        setGenerateStatus("error");
+        setGenerateMsg("Could not generate timetable — please try again");
         return;
       }
 
@@ -2107,12 +2102,11 @@ export default function TimetablePage() {
 
       if (saved > 0) {
         // Happy path — entries actually saved.
-        setToast({
-          tone: "success",
-          message:
-            `${saved} ${saved === 1 ? "session" : "sessions"} ` +
-            "generated for the next 2 weeks",
-        });
+        setGenerateStatus("success");
+        setGenerateMsg(
+          `✓ Timetable generated — ${saved} sessions created for 2 weeks`,
+        );
+        setTimeout(() => setGenerateStatus(null), 4000);
         // Trigger Effect 3 to re-fetch the visible week so the
         // new rows show up immediately.
         setCurrentWeekStart((prev) => new Date(prev));
@@ -2123,31 +2117,22 @@ export default function TimetablePage() {
         // "Already exists" short-circuit — arm the regenerate
         // flag so the next click overrides.
         setPendingRegenerate(true);
-        setToast({
-          tone: "success",
-          message:
-            "Timetable already exists. Click Generate Now again to regenerate.",
-        });
+        setGenerateStatus("success");
+        setGenerateMsg(
+          "Timetable already exists. Click Generate Now again to regenerate.",
+        );
         return;
       }
 
       // Fallback — backend responded 200 but with no entries
-      // saved AND no "already exists" hint. Tell the student
-      // we couldn't make a timetable this time.
-      setToast({
-        tone: "error",
-        message:
-          data?.message ||
-          "Could not generate timetable. Please try again.",
-      });
+      // saved AND no "already exists" hint.
+      setGenerateStatus("error");
+      setGenerateMsg("Could not generate timetable — please try again");
     } catch (err) {
-      // Network throw (most often: backend offline). Show a
-      // friendly toast — never let the page crash.
+      // Network throw (most often: backend offline).
       console.warn("[Timetable] /timetable/generate failed:", err);
-      setToast({
-        tone: "error",
-        message: "Could not reach the server. Please try again.",
-      });
+      setGenerateStatus("error");
+      setGenerateMsg("Could not generate timetable — please try again");
     } finally {
       setIsGenerating(false);
     }
@@ -2705,10 +2690,62 @@ export default function TimetablePage() {
           <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: "28px", color: "var(--text)", fontWeight: 700, margin: 0 }}>My Timetable</h1>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-muted)", marginTop: "4px", marginBottom: 0 }}>{weekRangeLabel}</p>
         </div>
-        <button type="button" onClick={handleGenerateNow} disabled={isGenerating} style={{ background: "var(--gold)", border: "none", borderRadius: "8px", padding: "10px 18px", fontFamily: "Inter, sans-serif", fontSize: "13px", fontWeight: 500, color: "var(--bg)", cursor: isGenerating ? "wait" : "pointer", display: "flex", alignItems: "center", gap: "8px", opacity: isGenerating ? 0.7 : 1 }}>
-          {isGenerating ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <RefreshCw size={14} aria-hidden />}
-          {isGenerating ? "Generating..." : "Generate Now"}
-        </button>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+          <button type="button" onClick={handleGenerateNow} disabled={isGenerating} style={{ background: "var(--gold)", border: "none", borderRadius: "8px", padding: "10px 18px", fontFamily: "Inter, sans-serif", fontSize: "13px", fontWeight: 500, color: "var(--bg)", cursor: isGenerating ? "wait" : "pointer", display: "flex", alignItems: "center", gap: "8px", opacity: isGenerating ? 0.7 : 1 }}>
+            {isGenerating ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <RefreshCw size={14} aria-hidden />}
+            {isGenerating ? "Generating..." : "Generate Now"}
+          </button>
+          {generateStatus ? (
+            <div
+              role={generateStatus === "error" ? "alert" : "status"}
+              onClick={
+                generateStatus === "error"
+                  ? () => setGenerateStatus(null)
+                  : undefined
+              }
+              style={{
+                marginTop: "12px",
+                padding: "12px 16px",
+                borderRadius: "8px",
+                fontFamily: "Inter, sans-serif",
+                fontSize: "12px",
+                textAlign: "center",
+                lineHeight: 1.6,
+                minWidth: "280px",
+                ...(generateStatus === "loading"
+                  ? {
+                      background: "var(--nav-icon-bg)",
+                      border: "0.5px solid var(--gold-border-hover)",
+                      color: "var(--text-muted)",
+                    }
+                  : generateStatus === "success"
+                    ? {
+                        background: "rgba(39,174,96,0.08)",
+                        border: "0.5px solid rgba(39,174,96,0.3)",
+                        color: "#27AE60",
+                      }
+                    : {
+                        background: "rgba(231,76,60,0.08)",
+                        border: "0.5px solid rgba(231,76,60,0.3)",
+                        color: "#E74C3C",
+                        cursor: "pointer",
+                      }),
+              }}
+            >
+              {generateStatus === "loading" ? (
+                <>
+                  Analysing your exam dates and study hours...
+                  <br />
+                  Building your personalised 2-week plan...
+                  <br />
+                  This takes about 30 seconds ✦
+                </>
+              ) : (
+                generateMsg
+              )}
+            </div>
+          ) : null}
+        </div>
       </header>
 
       {!entriesLoading && !weekIsEmpty && (
