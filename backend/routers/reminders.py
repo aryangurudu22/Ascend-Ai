@@ -15,7 +15,7 @@
 #   POST /reminders/trigger-exam-alert — n8n batch exam alerts (no auth).
 # ============================================================
 
-# Standard library — read RESEND_API_KEY from the environment.
+# Standard library — read BREVO_API_KEY from the environment.
 import os  # Access process environment variables for API keys.
 
 # Standard library — parse exam_dates JSON from Postgres.
@@ -25,8 +25,9 @@ import json  # deserialise profiles.exam_dates when stored as a string.
 from datetime import date, datetime, timedelta, timezone  # calendar week ranges and ISO timestamps.
 from typing import Any, Dict, List, Optional, Tuple  # type hints for helpers and responses.
 
-# Resend SDK — send transactional and reminder emails.
-import resend  # Official Python client for the Resend email API.
+# Brevo (Sendinblue) SDK — send transactional and reminder emails.
+import sib_api_v3_sdk  # Official Python client for the Brevo transactional email API.
+from sib_api_v3_sdk.rest import ApiException  # Brevo API error type for send failures.
 
 # FastAPI — build the /reminders route group and HTTP errors.
 from fastapi import APIRouter, Depends, Header  # Router plus JWT dependency injection.
@@ -40,15 +41,15 @@ from pydantic import BaseModel  # Base class for request/response schemas.
 # Supabase — service-role client shared across all backend routers.
 from database import supabase  # same connection object homework.py uses for Postgres writes
 
-# python-dotenv — load backend/.env before we read RESEND_API_KEY.
+# python-dotenv — load backend/.env before we read BREVO_API_KEY.
 from dotenv import load_dotenv  # loads environment variables from .env file
 
 load_dotenv()  # loads all variables from .env into memory so os.environ can access them
 
-resend.api_key = os.environ.get("RESEND_API_KEY")  # authenticates all requests to Resend
-
-if not resend.api_key:  # if key is missing, server will log a clear warning
-    print("WARNING: RESEND_API_KEY is not set in .env file")  # visible in uvicorn console on startup
+# Configure Brevo API key
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")  # transactional email API key from environment
+if not BREVO_API_KEY:  # if key is missing, server will log a clear warning
+    print("WARNING: BREVO_API_KEY is not set in environment")  # visible in uvicorn console on startup
 
 # Router for all reminder-email endpoints under /reminders.
 router = APIRouter()  # prefix and tags are set in main.py when mounted, same as homework router.
@@ -77,9 +78,6 @@ SYLLABUS_TOPICS_TABLE = "syllabus_topics"  # syllabus coverage and topic names.
 
 # Frontend base URL for deep links inside exam alert emails.
 FRONTEND_BASE_URL = os.getenv("FRONTEND_URL", "http://localhost:3001")  # from .env or dev default.
-
-# Resend free-tier inbox until custom domain is verified.
-RESEND_TEST_TO = "avinyag@gmail.com"  # hardcoded owner inbox for development sends.
 
 # Cambridge subject keys stored in exam_dates JSON.
 SUBJECT_KEYS = ("economics", "business", "english", "ict")  # canonical slugs used across the app.
@@ -540,22 +538,30 @@ def _call_groq_text(prompt: str, max_tokens: int) -> str:  # plain-text reply.
 
 
 # ============================================================
-# HELPER: _send_resend_email — deliver HTML via Resend
+# HELPER: _send_email — deliver HTML via Brevo transactional API
 # ============================================================
-def _send_resend_email(to_email: str, subject: str, html: str) -> None:  # raises on failure.
-    """Send one HTML email through Resend (uses free-tier test inbox when needed)."""
+def _send_email(to_email: str, subject: str, html: str) -> None:  # raises on failure.
+    """Send one HTML email through Brevo to the student's preference address."""
 
-    recipient = to_email
-    _ = to_email  # keep preference email for API response; swap to [to_email] after domain verify.
+    # Configure Brevo API client
+    configuration = sib_api_v3_sdk.Configuration()  # fresh SDK configuration object
+    configuration.api_key['api-key'] = BREVO_API_KEY  # attach API key for authenticated sends
 
-    resend.Emails.send(  # Resend SDK send call.
-        {  # payload dict.
-            "from": "onboarding@resend.dev",  # Resend sandbox sender.
-            "to": [recipient],  # delivery address list.
-            "subject": subject,  # inbox subject line.
-            "html": html,  # full HTML body from get_email_wrapper.
-        }  # end payload
-    )  # end send
+    # Create API instance
+    api_instance = sib_api_v3_sdk.TransactionalEmailsApi(  # transactional email API client
+        sib_api_v3_sdk.ApiClient(configuration)  # HTTP client bound to the configuration above
+    )
+
+    # Build email object
+    send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(  # Brevo payload for one HTML message
+        to=[{"email": to_email}],  # recipient list (student email from reminder_preferences)
+        sender={"name": "AscendAI", "email": "noreply@ascendai-cambridge.netlify.app"},  # from name + address
+        subject=subject,  # inbox subject line (unchanged from caller)
+        html_content=html  # full HTML body from get_email_wrapper or inline builders
+    )
+
+    # Send the email
+    api_instance.send_transac_email(send_smtp_email)  # POST to Brevo; raises ApiException on failure
 
 
 # Data the frontend sends when testing email delivery.
@@ -593,15 +599,12 @@ class DailyReminderRequest(BaseModel):  # Pydantic schema for POST /reminders/se
 async def send_test_email(body: TestEmailRequest):  # body is validated JSON from the frontend.
     # Send a one-off test email so the student can confirm Resend delivery.
 
-    try:  # Catch any Resend or network failure and return HTTP 500.
-        resend.Emails.send(  # Call Resend to deliver the test message.
-            {  # Payload dict required by resend.Emails.send().
-                "from": "onboarding@resend.dev",  # Resend free test sender (no custom domain).
-                "to": ["avinyag@gmail.com"],  # Resend free tier only delivers to account owner email until domain is verified
-                "subject": "AscendAI — Email Reminders Active",  # Inbox subject line.
-                "html": "<h2>Your study reminders are set up correctly.</h2><p>AscendAI will now send you daily study schedules, weekly progress reports, and exam alerts.</p>",  # HTML body shown in the email client.
-            }  # End of send payload.
-        )  # End of resend.Emails.send call.
+    try:  # Catch any Brevo or network failure and return HTTP 500.
+        _send_email(  # deliver test message via Brevo helper.
+            body.email.strip(),  # recipient from request body (student's inbox)
+            "AscendAI — Email Reminders Active",  # inbox subject line (unchanged).
+            "<h2>Your study reminders are set up correctly.</h2><p>AscendAI will now send you daily study schedules, weekly progress reports, and exam alerts.</p>",  # HTML body (unchanged).
+        )  # end _send_email
         return {"success": True, "message": "Test email sent successfully"}  # JSON success response for the frontend.
     except Exception:  # Any send failure becomes a 500 for the client.
         raise HTTPException(status_code=500, detail="Failed to send test email")  # Generic error — no internal details exposed.
@@ -726,17 +729,15 @@ async def send_daily_reminder(body: DailyReminderRequest):  # body carries the s
         prefs_rows = getattr(prefs_result, "data", None) or []  # list of preference rows (0 or 1).
         if not prefs_rows:  # student has never saved preferences.
             raise HTTPException(status_code=404, detail="No reminder preferences found for this user")  # tell caller to save prefs first
-        student_email = prefs_rows[0].get("email")  # delivery address (used once Resend domain is verified)
-        _ = student_email  # referenced so linters know we loaded it; Resend still uses owner email on free tier
+        student_email = str(prefs_rows[0].get("email") or "").strip()  # delivery address from reminder_preferences
+        if not student_email:  # preferences row without email
+            raise HTTPException(status_code=404, detail="No email on file in reminder preferences")  # cannot send
 
-        resend.Emails.send(  # deliver the daily schedule via Resend.
-            {  # payload dict for resend.Emails.send().
-                "from": "onboarding@resend.dev",  # Resend free test sender until custom domain is verified.
-                "to": ["avinyag@gmail.com"],  # hardcoded — Resend free tier only allows account owner inbox
-                "subject": f"AscendAI — Your Study Schedule for {today}",  # inbox subject shows today's date like the email heading
-                "html": email_html,  # full HTML schedule built in STEP 2.
-            }  # end send payload
-        )  # end resend.Emails.send
+        _send_email(  # deliver the daily schedule via Brevo.
+            student_email,  # student email from reminder_preferences
+            f"AscendAI — Your Study Schedule for {today}",  # inbox subject shows today's date like the email heading
+            email_html,  # full HTML schedule built in STEP 2 (unchanged).
+        )  # end _send_email
         return {  # success JSON for the frontend or cron caller.
             "success": True,  # operation completed without error.
             "message": "Daily reminder sent",  # human-readable confirmation.
@@ -835,8 +836,8 @@ async def send_weekly_reminder(  # no body; user_id from JWT.
         )  # end inner_html
 
         email_html = get_email_wrapper(inner_html, "Weekly Progress Report")  # full HTML document.
-        _send_resend_email(  # deliver via Resend.
-            user_email,  # preference email (logged; free tier uses RESEND_TEST_TO).
+        _send_email(  # deliver via Brevo.
+            user_email,  # preference email from reminder_preferences.
             "AscendAI — Your Weekly Progress Report",  # fixed subject line from spec.
             email_html,  # HTML body.
         )  # end send
@@ -938,7 +939,7 @@ async def send_exam_alert(  # no body; user_id from JWT.
 
         email_html = get_email_wrapper(inner_html, "Exam Alert")  # wrap with shared template.
         subject_line = f"⚠ AscendAI — {subject_label} Exam in {focus_days} Days"  # spec subject format.
-        _send_resend_email(user_email, subject_line, email_html)  # send via Resend.
+        _send_email(user_email, subject_line, email_html)  # send via Resend.
 
         return {"sent": True, "subjects_alerted": subjects_alerted}  # success payload from spec.
 
@@ -1209,7 +1210,7 @@ async def trigger_daily_reminders() -> TriggerBatchResponse:  # no auth; loops a
 
             html = get_email_wrapper(content, title)  # STEP 3g — full HTML document.
             subject = f"AscendAI — Study Sessions for {today}"  # inbox subject with date.
-            _send_resend_email(to_email, subject, html)  # STEP 3g — deliver via Resend helper.
+            _send_email(to_email, subject, html)  # STEP 3g — deliver via Resend helper.
             success_count += 1  # STEP 3h — count success.
 
         except Exception as exc:  # Resend or DB failure for this user.
@@ -1318,7 +1319,7 @@ async def trigger_weekly_reminders() -> TriggerBatchResponse:  # no auth; loops 
             content = content.replace("<motion.div", "<div").replace("</motion.div>", "</div>")  # fix typos
 
             html = get_email_wrapper(content, title)  # wrap with shared template.
-            _send_resend_email(  # STEP 3i — send via Resend.
+            _send_email(  # STEP 3i — send via Resend.
                 to_email,  # preference email.
                 "AscendAI — Your Weekly Progress Report",  # subject line.
                 html,  # HTML body.
@@ -1453,7 +1454,7 @@ async def trigger_exam_alert_reminders() -> TriggerExamAlertResponse:  # no auth
 
                 html = get_email_wrapper(content, title)  # full HTML document.
                 subject_line = f"AscendAI — {title}"  # inbox subject.
-                _send_resend_email(to_email, subject_line, html)  # STEP 3f — send.
+                _send_email(to_email, subject_line, html)  # STEP 3f — send.
                 alert_count += 1  # STEP 3g — count sent email.
 
         except Exception as exc:  # per-user failure.
