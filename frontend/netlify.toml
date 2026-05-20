@@ -1,0 +1,8 @@
+Create a new file at frontend/netlify.toml with exactly this content:
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
