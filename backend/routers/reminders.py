@@ -154,17 +154,19 @@ def get_email_wrapper(content: str, title: str) -> str:  # wraps inner HTML with
 <meta charset="UTF-8">  <!-- UTF-8 for Cambridge subject names and punctuation -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0">  <!-- mobile-friendly scaling -->
 <style>  <!-- inline stylesheet for clients that strip external CSS -->
-  body {{ margin: 0; padding: 0; background: #0A0F1E; font-family: Inter, Arial, sans-serif; }}  /* page backdrop */
-  .container {{ max-width: 600px; margin: 0 auto; background: #111827; border-radius: 12px; overflow: hidden; }}  /* card */
-  .header {{ background: #0A0F1E; padding: 24px 32px; border-bottom: 1px solid rgba(212,175,55,0.2); }}  /* top bar */
-  .logo {{ font-size: 22px; font-weight: 700; color: #D4AF37; font-family: Georgia, serif; }}  /* AscendAI wordmark */
-  .tagline {{ font-size: 11px; color: rgba(212,175,55,0.5); margin-top: 2px; }}  /* subtitle under logo */
-  .body {{ padding: 28px 32px; color: #EDE9D8; }}  /* main content area */
-  .stat-box {{ display: inline-block; background: #1A2235; border: 0.5px solid rgba(212,175,55,0.2); border-radius: 8px; padding: 14px 18px; margin: 6px; text-align: center; min-width: 110px; }}  /* stat tile */
-  .stat-number {{ font-size: 24px; font-weight: 700; color: #D4AF37; font-family: Georgia, serif; }}  /* big number */
-  .stat-label {{ font-size: 10px; color: rgba(237,233,216,0.5); text-transform: uppercase; letter-spacing: 0.1em; margin-top: 4px; }}  /* stat caption */
-  .footer {{ padding: 16px 32px; border-top: 1px solid rgba(212,175,55,0.1); font-size: 11px; color: rgba(237,233,216,0.3); text-align: center; }}  /* footer strip */
-  a {{ color: #D4AF37; text-decoration: none; }}  /* gold links */
+  body {{ margin: 0; padding: 20px 0; background: #f4f1e8; font-family: Inter, Arial, sans-serif; }}
+  .container {{ max-width: 600px; margin: 0 auto; background: #0A0F1E; border-radius: 12px; overflow: hidden; border: 1px solid rgba(212,175,55,0.3); }}
+  .header {{ background: #080D18; padding: 24px 32px; border-bottom: 1px solid rgba(212,175,55,0.2); }}
+  .logo {{ font-size: 22px; font-weight: 700; color: #D4AF37; font-family: Georgia, serif; }}
+  .tagline {{ font-size: 11px; color: rgba(212,175,55,0.5); margin-top: 2px; }}
+  .body {{ padding: 28px 32px; color: #EDE9D8; background: #0A0F1E; }}
+  .stat-box {{ display: inline-block; background: #1A2235; border: 0.5px solid rgba(212,175,55,0.2); border-radius: 8px; padding: 14px 18px; margin: 6px; text-align: center; min-width: 110px; }}
+  .stat-number {{ font-size: 24px; font-weight: 700; color: #D4AF37; font-family: Georgia, serif; }}
+  .stat-label {{ font-size: 10px; color: rgba(237,233,216,0.5); text-transform: uppercase; letter-spacing: 0.1em; margin-top: 4px; }}
+  .footer {{ padding: 16px 32px; border-top: 1px solid rgba(212,175,55,0.1); font-size: 11px; color: rgba(237,233,216,0.3); text-align: center; background: #080D18; }}
+  a {{ color: #D4AF37; text-decoration: none; }}
+  p {{ color: #EDE9D8; }}
+  h1, h2, h3 {{ color: #D4AF37; }}
 </style>  <!-- end style block -->
 </head>  <!-- end head -->
 <body>  <!-- visible email body -->
