@@ -43,6 +43,8 @@ from contextlib import asynccontextmanager
 from routers import homework, flashcards, quiz, timetable, onboarding, past_papers, notes, auth, chat, analytics, syllabus, notifications  # noqa: F401 — registered below
 from routers.reminders import router as reminders_router
 
+import sentry_sdk
+
 # ============================================================
 # LOAD SECRET KEYS
 # This must happen before anything else — like unlocking 
@@ -51,6 +53,18 @@ from routers.reminders import router as reminders_router
 
 # Go and read the .env file right now
 load_dotenv()
+
+sentry_dsn = os.getenv("SENTRY_DSN", "")
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        traces_sample_rate=0.1,
+        send_default_pii=False,
+        environment=os.getenv("ENVIRONMENT", "production"),
+    )
+    print("[OK] Sentry error monitoring initialized")
+else:
+    print("[WARN] SENTRY_DSN not set — Sentry disabled")
 
 # Pick up each secret key and store it in a variable
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
