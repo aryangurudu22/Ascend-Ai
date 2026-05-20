@@ -542,7 +542,7 @@ def _send_email(to_email: str, subject: str, html: str) -> None:  # raises on fa
     # Build email object
     send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(  # Brevo payload for one HTML message
         to=[{"email": to_email}],  # recipient list (student email from reminder_preferences)
-        sender={"name": "AscendAI", "email": "noreply@ascendai-cambridge.netlify.app"},  # from name + address
+        sender={"name": "AscendAI", "email": "ascend.ai.study@gmail.com"},  # from name + address
         subject=subject,  # inbox subject line (unchanged from caller)
         html_content=html  # full HTML body from get_email_wrapper or inline builders
     )
