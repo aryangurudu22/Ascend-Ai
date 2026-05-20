@@ -606,6 +606,43 @@ def save_profile(
             detail={"error": "Could not save profile. Please try again."},
         )
 
+    # ── STEP 4b: default reminder preferences (non-blocking). ─
+    # After the profile row is saved, ensure reminder_preferences
+    # exists so email reminders work without a separate setup step.
+    try:
+        # Check if reminder preferences already exist for this user.
+        existing_prefs = (
+            supabase
+            .table("reminder_preferences")
+            .select("id")
+            .eq("user_id", verified_user_id)
+            .limit(1)
+            .execute()
+        )
+
+        # Only create a row when none exists yet (idempotent onboarding).
+        if not existing_prefs.data:
+            supabase.table("reminder_preferences").insert({
+                # Link the preferences row to the authenticated user.
+                "user_id": verified_user_id,
+                # Email address used when sending reminder emails.
+                "email": body.email.strip(),
+                # Enable daily study reminder emails by default.
+                "daily_reminder": True,
+                # Enable weekly progress report emails by default.
+                "weekly_report": True,
+                # Enable exam-date alert emails by default.
+                "exam_alert": True,
+            }).execute()
+            print(
+                f"[Onboarding] Created default reminder preferences "
+                f"for {verified_user_id}"
+            )
+
+    except Exception as e:
+        # Do not fail onboarding — profile save already succeeded.
+        print(f"[Onboarding] Failed to create reminder preferences: {e}")
+
     # ── STEP 5: success. ─────────────────────────────────────
     return OnboardingProfileResponse(
         profile_saved=True,
