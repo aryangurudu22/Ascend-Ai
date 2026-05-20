@@ -545,7 +545,7 @@ def _call_groq_text(prompt: str, max_tokens: int) -> str:  # plain-text reply.
 def _send_resend_email(to_email: str, subject: str, html: str) -> None:  # raises on failure.
     """Send one HTML email through Resend (uses free-tier test inbox when needed)."""
 
-    recipient = RESEND_TEST_TO  # Resend free tier: owner inbox only until domain verified.
+    recipient = to_email
     _ = to_email  # keep preference email for API response; swap to [to_email] after domain verify.
 
     resend.Emails.send(  # Resend SDK send call.
