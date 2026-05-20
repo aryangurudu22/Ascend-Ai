@@ -165,8 +165,11 @@ def get_email_wrapper(content: str, title: str) -> str:  # wraps inner HTML with
   .stat-label {{ font-size: 10px; color: rgba(237,233,216,0.5); text-transform: uppercase; letter-spacing: 0.1em; margin-top: 4px; }}
   .footer {{ padding: 16px 32px; border-top: 1px solid rgba(212,175,55,0.1); font-size: 11px; color: rgba(237,233,216,0.3); text-align: center; background: #080D18; }}
   a {{ color: #D4AF37; text-decoration: none; }}
-  p {{ color: #EDE9D8; }}
-  h1, h2, h3 {{ color: #D4AF37; }}
+  p {{ color: #EDE9D8; margin: 0 0 12px; line-height: 1.6; }}
+  h1, h2, h3 {{ color: #D4AF37; margin: 0 0 12px; font-family: Georgia, serif; }}
+  span {{ color: #EDE9D8; }}
+  td {{ color: #EDE9D8; }}
+  div {{ color: #EDE9D8; }}
 </style>  <!-- end style block -->
 </head>  <!-- end head -->
 <body>  <!-- visible email body -->
