@@ -392,42 +392,29 @@ def _normalise_exam_dates_json(raw: Any) -> Dict[str, str]:  # slug → YYYY-MM-
 # HELPER: _load_exam_dates_for_user — profiles then profiles fallback
 # ============================================================
 def _load_exam_dates_for_user(user_id: str) -> Dict[str, str]:  # slug → exam date ISO date.
-    """Load exam dates from profiles, profiles, then subjects table."""
+    """Load exam dates from the shared subjects table (code → exam_date)."""
 
-    dates: Dict[str, str] = {}  # accumulator.
+    dates: Dict[str, str] = {}  # accumulator keyed by subject slug.
 
-    for table in (USER_PROFILES_TABLE, PROFILES_TABLE):  # try spec table then legacy.
-        try:  # read exam_dates JSON.
-            result = (  # query.
-                supabase.table(table)  # profiles or profiles.
-                .select("exam_dates")  # JSON column only.
-                .eq("user_id", user_id)  # owner.
-                .limit(1)  # one row.
-                .execute()  # run.
-            )  # end chain
-            rows = getattr(result, "data", None) or []  # rows.
-            if rows and rows[0].get("exam_dates") is not None:  # column populated.
-                parsed = _normalise_exam_dates_json(rows[0]["exam_dates"])  # normalise keys.
-                dates.update(parsed)  # merge.
-                if dates:  # stop early when we have data.
-                    return dates  # done.
-        except Exception as exc:  # table missing or RLS.
-            print(f"[Reminders] exam_dates from {table} failed: {type(exc).__name__}: {exc}")  # log.
-
-    try:  # shared subjects.exam_date fallback.
-        result = supabase.table(SUBJECTS_TABLE).select("code, exam_date").execute()  # all subjects.
-        for row in getattr(result, "data", None) or []:  # each subject row.
-            code = str(row.get("code") or "").strip()  # syllabus code.
-            exam_value = row.get("exam_date")  # date or null.
-            if not code or not exam_value:  # skip incomplete.
+    try:  # query subjects rows that have an exam_date set.
+        result = (  # PostgREST query chain.
+            supabase.table("subjects")  # shared Cambridge subjects table.
+            .select("code, exam_date")  # syllabus code and exam date columns only.
+            .not_.is_("exam_date", "null")  # skip rows with no exam date.
+            .execute()  # run the query.
+        )  # end chain
+        for row in getattr(result, "data", None) or []:  # each subject row returned.
+            code = str(row.get("code") or "").strip()  # syllabus code e.g. 9708.
+            exam_value = row.get("exam_date")  # date value from Postgres.
+            if not code or not exam_value:  # skip incomplete rows.
                 continue  # next row.
-            subject_key = SUBJECT_CODE_TO_KEY.get(code)  # map to slug.
-            if subject_key and subject_key not in dates:  # fill gap only.
-                dates[subject_key] = str(exam_value)[:10]  # store ISO date.
+            subject_key = SUBJECT_CODE_TO_KEY.get(code)  # map code to slug (economics, etc.).
+            if subject_key:  # known Cambridge code.
+                dates[subject_key] = str(exam_value)[:10]  # store ISO date YYYY-MM-DD.
     except Exception as exc:  # subjects read failed.
-        print(f"[Reminders] subjects exam_date fallback failed: {type(exc).__name__}: {exc}")  # log.
+        print(f"[Reminders] subjects exam_date failed: {exc}")  # log for server debugging.
 
-    return dates  # may be empty.
+    return dates  # may be empty if no exam dates on file.
 
 
 # ============================================================
@@ -560,8 +547,18 @@ def _send_email(to_email: str, subject: str, html: str) -> None:  # raises on fa
         html_content=html  # full HTML body from get_email_wrapper or inline builders
     )
 
-    # Send the email
-    api_instance.send_transac_email(send_smtp_email)  # POST to Brevo; raises ApiException on failure
+    # Log before send so Render logs show which message is in flight.
+    print(f"[Reminders] Sending email to {to_email} subject: {subject}")  # pre-send trace line.
+
+    try:  # deliver via Brevo; log success or re-raise on failure.
+        api_instance.send_transac_email(send_smtp_email)  # POST to Brevo transactional API.
+        print(f"[Reminders] Email sent successfully to {to_email}")  # confirm delivery in logs.
+    except ApiException as exc:  # Brevo returned a structured API error.
+        print(f"[Reminders] Brevo API error: {exc}")  # log Brevo response body / status.
+        raise  # propagate so callers can return HTTP 500.
+    except Exception as exc:  # network, auth, or unexpected failure.
+        print(f"[Reminders] Email send failed: {type(exc).__name__}: {exc}")  # log exception type.
+        raise  # propagate to caller.
 
 
 # Data the frontend sends when testing email delivery.
@@ -1006,25 +1003,9 @@ def _prefs_rows_with_email(  # load rows where a boolean toggle is true and emai
 # HELPER: _get_first_name — display name for email greeting
 # ============================================================
 def _get_first_name(user_id: str) -> str:  # first name or fallback "Student".
-    """Load first_name from profiles, else first token of profiles.full_name."""
+    """Load first token of profiles.full_name for email greeting."""
 
-    try:  # profiles.first_name when column exists.
-        result = (  # query chain.
-            supabase.table(USER_PROFILES_TABLE)  # profiles table.
-            .select("first_name")  # greeting column from spec.
-            .eq("user_id", user_id)  # owner filter.
-            .limit(1)  # at most one row.
-            .execute()  # run query.
-        )  # end chain
-        rows = getattr(result, "data", None) or []  # rows list.
-        if rows:  # row found.
-            name = str(rows[0].get("first_name") or "").strip()  # first_name value.
-            if name:  # non-empty greeting.
-                return name  # use profiles first_name.
-    except Exception as exc:  # column may not exist on all deployments.
-        print(f"[Reminders] profiles first_name: {type(exc).__name__}: {exc}")  # log.
-
-    try:  # profiles.full_name fallback from onboarding.
+    try:  # profiles.full_name from onboarding POST /onboarding/profile.
         result = (  # query chain.
             supabase.table(PROFILES_TABLE)  # profiles table.
             .select("full_name")  # display name from onboarding POST /onboarding/profile.
