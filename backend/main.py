@@ -7,7 +7,7 @@
 # FastAPI is the framework that runs our backend server.
 # HTTPException lets us return a clean error response with a status code
 # when something goes wrong (e.g. invalid subject, AI provider down).
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 
 # CORSMiddleware allows our frontend (localhost:3001) to talk
 # to our backend (localhost:8001) without being blocked
@@ -649,6 +649,7 @@ def health_check():
 
 
 @app.get("/health")
+@app.head("/health")
 def health_check():
     # Simple health check endpoint
     # Called by UptimeRobot every 5 minutes

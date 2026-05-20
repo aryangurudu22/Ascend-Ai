@@ -19,7 +19,7 @@
 import os  # Access process environment variables for API keys.
 
 # Standard library — parse exam_dates JSON from Postgres.
-import json  # deserialise user_profiles.exam_dates when stored as a string.
+import json  # deserialise profiles.exam_dates when stored as a string.
 
 # Standard library — format today's date for scheduled_date queries and email copy.
 from datetime import date, datetime, timedelta, timezone  # calendar week ranges and ISO timestamps.
@@ -70,8 +70,8 @@ REMINDER_PREFS_TABLE = "reminder_preferences"  # student email toggles and deliv
 TIMETABLE_TABLE = "timetable_entries"  # study sessions with scheduled_date and completed flag.
 HOMEWORK_TABLE = "homework_questions"  # homework assistant questions per student.
 QUIZ_SESSIONS_TABLE = "quiz_sessions"  # flashcard quiz attempts and scores.
-USER_PROFILES_TABLE = "user_profiles"  # exam_dates JSON per student.
-PROFILES_TABLE = "profiles"  # fallback when user_profiles row is missing.
+USER_PROFILES_TABLE = "profiles"  # exam_dates JSON per student.
+PROFILES_TABLE = "profiles"  # fallback when profiles row is missing.
 SUBJECTS_TABLE = "subjects"  # shared exam_date fallback by syllabus code.
 SYLLABUS_TOPICS_TABLE = "syllabus_topics"  # syllabus coverage and topic names.
 
@@ -391,17 +391,17 @@ def _normalise_exam_dates_json(raw: Any) -> Dict[str, str]:  # slug → YYYY-MM-
 
 
 # ============================================================
-# HELPER: _load_exam_dates_for_user — user_profiles then profiles fallback
+# HELPER: _load_exam_dates_for_user — profiles then profiles fallback
 # ============================================================
 def _load_exam_dates_for_user(user_id: str) -> Dict[str, str]:  # slug → exam date ISO date.
-    """Load exam dates from user_profiles, profiles, then subjects table."""
+    """Load exam dates from profiles, profiles, then subjects table."""
 
     dates: Dict[str, str] = {}  # accumulator.
 
     for table in (USER_PROFILES_TABLE, PROFILES_TABLE):  # try spec table then legacy.
         try:  # read exam_dates JSON.
             result = (  # query.
-                supabase.table(table)  # user_profiles or profiles.
+                supabase.table(table)  # profiles or profiles.
                 .select("exam_dates")  # JSON column only.
                 .eq("user_id", user_id)  # owner.
                 .limit(1)  # one row.
@@ -1005,11 +1005,11 @@ def _prefs_rows_with_email(  # load rows where a boolean toggle is true and emai
 # HELPER: _get_first_name — display name for email greeting
 # ============================================================
 def _get_first_name(user_id: str) -> str:  # first name or fallback "Student".
-    """Load first_name from user_profiles, else first token of profiles.full_name."""
+    """Load first_name from profiles, else first token of profiles.full_name."""
 
-    try:  # user_profiles.first_name when column exists.
+    try:  # profiles.first_name when column exists.
         result = (  # query chain.
-            supabase.table(USER_PROFILES_TABLE)  # user_profiles table.
+            supabase.table(USER_PROFILES_TABLE)  # profiles table.
             .select("first_name")  # greeting column from spec.
             .eq("user_id", user_id)  # owner filter.
             .limit(1)  # at most one row.
@@ -1019,9 +1019,9 @@ def _get_first_name(user_id: str) -> str:  # first name or fallback "Student".
         if rows:  # row found.
             name = str(rows[0].get("first_name") or "").strip()  # first_name value.
             if name:  # non-empty greeting.
-                return name  # use user_profiles first_name.
+                return name  # use profiles first_name.
     except Exception as exc:  # column may not exist on all deployments.
-        print(f"[Reminders] user_profiles first_name: {type(exc).__name__}: {exc}")  # log.
+        print(f"[Reminders] profiles first_name: {type(exc).__name__}: {exc}")  # log.
 
     try:  # profiles.full_name fallback from onboarding.
         result = (  # query chain.
