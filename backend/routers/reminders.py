@@ -145,43 +145,51 @@ def verify_bearer_token(  # validates Supabase JWT from Authorization header.
 # ============================================================
 # HELPER: get_email_wrapper — shared HTML email shell
 # ============================================================
-def get_email_wrapper(content: str, title: str) -> str:  # wraps inner HTML with AscendAI email chrome.
+def get_email_wrapper(content: str, title: str) -> str:  # Gmail-safe table layout; all styles inline.
     """Return a complete HTML document with AscendAI header, body slot, and footer."""
 
-    return f"""<!DOCTYPE html>  <!-- email clients expect a full HTML document -->
-<html>  <!-- root element -->
-<head>  <!-- metadata and shared styles -->
-<meta charset="UTF-8">  <!-- UTF-8 for Cambridge subject names and punctuation -->
-<meta name="viewport" content="width=device-width, initial-scale=1.0">  <!-- mobile-friendly scaling -->
-<style>  <!-- inline stylesheet for clients that strip external CSS -->
-  body {{ margin: 0; padding: 20px 0; background: #f4f1e8; font-family: Inter, Arial, sans-serif; }}
-  .container {{ max-width: 600px; margin: 0 auto; background: #0A0F1E; border-radius: 12px; overflow: hidden; border: 1px solid rgba(212,175,55,0.3); }}
-  .header {{ background: #080D18; padding: 24px 32px; border-bottom: 1px solid rgba(212,175,55,0.2); }}
-  .logo {{ font-size: 22px; font-weight: 700; color: #D4AF37; font-family: Georgia, serif; }}
-  .tagline {{ font-size: 11px; color: rgba(212,175,55,0.5); margin-top: 2px; }}
-  .body {{ padding: 28px 32px; color: #EDE9D8; background: #0A0F1E; }}
-  .stat-box {{ display: inline-block; background: #1A2235; border: 0.5px solid rgba(212,175,55,0.2); border-radius: 8px; padding: 14px 18px; margin: 6px; text-align: center; min-width: 110px; }}
-  .stat-number {{ font-size: 24px; font-weight: 700; color: #D4AF37; font-family: Georgia, serif; }}
-  .stat-label {{ font-size: 10px; color: rgba(237,233,216,0.5); text-transform: uppercase; letter-spacing: 0.1em; margin-top: 4px; }}
-  .footer {{ padding: 16px 32px; border-top: 1px solid rgba(212,175,55,0.1); font-size: 11px; color: rgba(237,233,216,0.3); text-align: center; background: #080D18; }}
-  a {{ color: #D4AF37; text-decoration: none; }}
-  p {{ color: #EDE9D8; margin: 0 0 12px; line-height: 1.6; }}
-  h1, h2, h3 {{ color: #D4AF37; margin: 0 0 12px; font-family: Georgia, serif; }}
-  span {{ color: #EDE9D8; }}
-  td {{ color: #EDE9D8; }}
-  div {{ color: #EDE9D8; }}
-</style>  <!-- end style block -->
-</head>  <!-- end head -->
-<body>  <!-- visible email body -->
-  <div class="container">  <!-- centred card wrapper -->
-    <div class="header">  <!-- branded header -->
-      <div class="logo">AscendAI</div>  <!-- product name -->
-      <div class="tagline">{title}</div>  <!-- dynamic subtitle e.g. Weekly Progress Report -->
-    </div>  <!-- end header -->
-    <div class="body">{content}</div>  <!-- caller-supplied sections -->
-    <div class="footer">AscendAI by Shivora — Unsubscribe</div>  <!-- legal/footer line -->
-  </div>  <!-- end container -->
-</body>  <!-- end body -->
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;background:#ffffff;font-family:Inter,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;">
+    <tr>
+      <td align="center" style="padding:20px 0;">
+        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
+          
+          <!-- HEADER -->
+          <tr>
+            <td style="background:#0A0F1E;padding:24px 32px;border-radius:12px 12px 0 0;">
+              <div style="font-size:24px;font-weight:700;color:#D4AF37;font-family:Georgia,serif;">AscendAI</div>
+              <div style="font-size:11px;color:rgba(212,175,55,0.6);margin-top:4px;">{title}</div>
+            </td>
+          </tr>
+          
+          <!-- BODY -->
+          <tr>
+            <td style="background:#0A0F1E;padding:28px 32px;color:#EDE9D8;">
+              {content}
+            </td>
+          </tr>
+          
+          <!-- FOOTER -->
+          <tr>
+            <td style="background:#080D18;padding:16px 32px;border-radius:0 0 12px 12px;border-top:1px solid rgba(212,175,55,0.15);">
+              <p style="font-size:11px;color:rgba(237,233,216,0.4);text-align:center;margin:0;">
+                AscendAI by Shivora &nbsp;|&nbsp; 
+                <a href="#" style="color:rgba(212,175,55,0.5);text-decoration:none;">Unsubscribe</a>
+              </p>
+            </td>
+          </tr>
+          
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
 </html>"""
 
 
@@ -672,7 +680,7 @@ async def send_daily_reminder(body: DailyReminderRequest):  # body carries the s
         sessions = getattr(timetable_result, "data", None) or []  # list of matching timetable rows (may be empty).
 
         if not sessions:  # no sessions today — use the empty-state copy.
-            sessions_html = "<p>You have no study sessions scheduled for today. Use this time to review your weakest subject.</p>"  # empty-day message
+            sessions_html = '<p style="color:#EDE9D8;margin:0 0 12px;">You have no study sessions scheduled for today. Use this time to review your weakest subject.</p>'  # empty-day message
         else:  # at least one session — build an HTML table of rows.
             table_rows_html = ""  # accumulates <tr> cells for each session.
             for session in sessions:  # one row per timetable entry.
@@ -696,10 +704,10 @@ async def send_daily_reminder(body: DailyReminderRequest):  # body carries the s
                     duration_minutes = end_mins - start_mins  # length of the session in minutes.
                 table_rows_html += (  # append one styled table row for this session.
                     f"<tr>"  # open table row for this session.
-                    f"<td style='padding:8px;border-bottom:1px solid #D4AF37;'>{subject}</td>"  # subject column cell.
-                    f"<td style='padding:8px;border-bottom:1px solid #D4AF37;'>{start_time}</td>"  # start time column cell.
-                    f"<td style='padding:8px;border-bottom:1px solid #D4AF37;'>{end_time}</td>"  # end time column cell.
-                    f"<td style='padding:8px;border-bottom:1px solid #D4AF37;'>{duration_minutes}</td>"  # duration column cell.
+                    f"<td style='padding:8px;border-bottom:1px solid #D4AF37;color:#EDE9D8;'>{subject}</td>"  # subject column cell.
+                    f"<td style='padding:8px;border-bottom:1px solid #D4AF37;color:#EDE9D8;'>{start_time}</td>"  # start time column cell.
+                    f"<td style='padding:8px;border-bottom:1px solid #D4AF37;color:#EDE9D8;'>{end_time}</td>"  # end time column cell.
+                    f"<td style='padding:8px;border-bottom:1px solid #D4AF37;color:#EDE9D8;'>{duration_minutes}</td>"  # duration column cell.
                     f"</tr>"  # close table row for this session.
                 )  # end row append
             sessions_html = (  # full table wrapper with AscendAI navy/gold/cream inline styles.
@@ -714,12 +722,11 @@ async def send_daily_reminder(body: DailyReminderRequest):  # body carries the s
                 "</tbody></table>"  # close body and table.
             )  # end sessions_html table
 
-        email_html = (  # complete HTML body sent through Resend.
-            f"<div style='background:#0A0F1E;color:#EDE9D8;padding:24px;font-family:sans-serif;'>"  # outer email wrapper div.
-            f"<h1 style='color:#D4AF37;margin:0 0 16px;'>Your Study Schedule for {today}</h1>"  # shows the actual date in the email heading
+        content = (  # inner body HTML for Gmail-safe wrapper.
+            f'<h2 style="color:#EDE9D8;font-family:Georgia,serif;margin:0 0 12px;">Your Study Schedule for {today}</h2>'  # heading with explicit cream text.
             f"{sessions_html}"  # sessions table or empty-state paragraph.
-            f"</div>"  # close outer email wrapper div.
-        )  # end email_html — closes outer div wrapper
+        )  # end content
+        email_html = get_email_wrapper(content, f"Study Schedule — {today}")  # full document via table layout.
 
         prefs_result = (  # fetch reminder_preferences so we know where to send mail.
             supabase.table("reminder_preferences")  # one row per student email settings.
@@ -801,12 +808,12 @@ async def send_weekly_reminder(  # no body; user_id from JWT.
             colour = _exam_countdown_color(days_left)  # red / gold / green hex.
             label = SUBJECT_LABELS.get(subject_key, subject_key.title())  # display name.
             countdown_html += (  # append one line per subject.
-                f"<p style='color:{colour};margin:6px 0;'>"
-                f"<strong>{label}</strong> — {days_left} days remaining (exam {exam_date})"
+                f'<p style="color:{colour};margin:0 0 12px;">'
+                f"<strong style='color:{colour};'>{label}</strong> — {days_left} days remaining (exam {exam_date})"
                 f"</p>"
             )  # end line
         if not countdown_html:  # no exam dates configured.
-            countdown_html = "<p style='color:rgba(237,233,216,0.6);'>No exam dates on file yet.</p>"  # placeholder.
+            countdown_html = '<p style="color:rgba(237,233,216,0.6);margin:0 0 12px;">No exam dates on file yet.</p>'  # placeholder.
 
         groq_prompt = (  # motivational copy prompt for Groq.
             f"Write 2 encouraging sentences for a Cambridge AS Level student in Zambia "
@@ -821,20 +828,24 @@ async def send_weekly_reminder(  # no body; user_id from JWT.
             )  # end fallback
 
         inner_html = (  # body HTML passed into get_email_wrapper.
-            f"<p style='color:#EDE9D8;margin:0 0 16px;'>Week of {monday_label} — {sunday_label}</p>"
-            f"<div style='text-align:center;margin-bottom:20px;'>"
-            f"<span class='stat-box'><span class='stat-number'>{completed_sessions}/{total_sessions}</span>"
-            f"<br><span class='stat-label'>Sessions Completed</span></span>"
-            f"<span class='stat-box'><span class='stat-number'>{hours_studied}h</span>"
-            f"<br><span class='stat-label'>Hours Studied</span></span>"
-            f"<span class='stat-box'><span class='stat-number'>{questions_asked}</span>"
-            f"<br><span class='stat-label'>Questions Asked</span></span>"
-            f"<span class='stat-box'><span class='stat-number'>{avg_quiz}%</span>"
-            f"<br><span class='stat-label'>Avg Quiz Score</span></span>"
+            f'<p style="color:#EDE9D8;margin:0 0 12px;">Week of {monday_label} — {sunday_label}</p>'
+            f'<div style="text-align:center;margin-bottom:20px;">'
+            f'<span style="display:inline-block;background:#1A2235;border:0.5px solid rgba(212,175,55,0.2);border-radius:8px;padding:14px 18px;margin:6px;text-align:center;min-width:110px;">'
+            f'<span style="font-size:24px;font-weight:700;color:#D4AF37;font-family:Georgia,serif;">{completed_sessions}/{total_sessions}</span>'
+            f'<br><span style="font-size:10px;color:rgba(237,233,216,0.5);text-transform:uppercase;letter-spacing:0.1em;margin-top:4px;">Sessions Completed</span></span>'
+            f'<span style="display:inline-block;background:#1A2235;border:0.5px solid rgba(212,175,55,0.2);border-radius:8px;padding:14px 18px;margin:6px;text-align:center;min-width:110px;">'
+            f'<span style="font-size:24px;font-weight:700;color:#D4AF37;font-family:Georgia,serif;">{hours_studied}h</span>'
+            f'<br><span style="font-size:10px;color:rgba(237,233,216,0.5);text-transform:uppercase;letter-spacing:0.1em;margin-top:4px;">Hours Studied</span></span>'
+            f'<span style="display:inline-block;background:#1A2235;border:0.5px solid rgba(212,175,55,0.2);border-radius:8px;padding:14px 18px;margin:6px;text-align:center;min-width:110px;">'
+            f'<span style="font-size:24px;font-weight:700;color:#D4AF37;font-family:Georgia,serif;">{questions_asked}</span>'
+            f'<br><span style="font-size:10px;color:rgba(237,233,216,0.5);text-transform:uppercase;letter-spacing:0.1em;margin-top:4px;">Questions Asked</span></span>'
+            f'<span style="display:inline-block;background:#1A2235;border:0.5px solid rgba(212,175,55,0.2);border-radius:8px;padding:14px 18px;margin:6px;text-align:center;min-width:110px;">'
+            f'<span style="font-size:24px;font-weight:700;color:#D4AF37;font-family:Georgia,serif;">{avg_quiz}%</span>'
+            f'<br><span style="font-size:10px;color:rgba(237,233,216,0.5);text-transform:uppercase;letter-spacing:0.1em;margin-top:4px;">Avg Quiz Score</span></span>'
             f"</div>"
-            f"<h2 style='color:#D4AF37;font-size:16px;margin:24px 0 8px;'>Exam countdown</h2>"
+            f'<h2 style="color:#EDE9D8;font-family:Georgia,serif;margin:0 0 12px;">Exam countdown</h2>'
             f"{countdown_html}"
-            f"<p style='color:#EDE9D8;margin-top:24px;font-style:italic;'>{motivation}</p>"
+            f'<p style="color:#EDE9D8;margin:0 0 12px;font-style:italic;">{motivation}</p>'
         )  # end inner_html
 
         email_html = get_email_wrapper(inner_html, "Weekly Progress Report")  # full HTML document.
@@ -918,25 +929,25 @@ async def send_exam_alert(  # no body; user_id from JWT.
             closing_line = "You still have time — focus your next sessions on the gaps below."  # static line.
 
         inner_html = (  # exam alert body HTML.
-            f"<div style='background:#E74C3C;padding:16px 20px;text-align:center;margin:-28px -32px 24px;'>"
-            f"<span style='color:#FFFFFF;font-weight:700;font-size:18px;letter-spacing:0.08em;'>EXAM ALERT</span>"
+            f'<div style="background:#E74C3C;padding:16px 20px;text-align:center;margin-bottom:24px;">'
+            f'<span style="color:#FFFFFF;font-weight:700;font-size:18px;letter-spacing:0.08em;">EXAM ALERT</span>'
             f"</div>"
-            f"<h1 style='color:#D4AF37;font-size:28px;margin:0 0 8px;'>{subject_label}</h1>"
-            f"<p style='color:#EDE9D8;font-size:20px;margin:0 0 20px;'>{focus_days} days remaining — exam on {focus_date}</p>"
-            f"<p style='color:rgba(237,233,216,0.7);margin:0 0 8px;'>Syllabus coverage</p>"
-            f"<div style='background:#1A2235;border-radius:8px;height:12px;overflow:hidden;margin-bottom:8px;'>"
-            f"<div style='width:{coverage_pct}%;height:100%;background:#D4AF37;'></div>"
+            f'<h2 style="color:#D4AF37;font-family:Georgia,serif;margin:0 0 12px;font-size:28px;">{subject_label}</h2>'
+            f'<p style="color:#EDE9D8;margin:0 0 12px;font-size:20px;">{focus_days} days remaining — exam on {focus_date}</p>'
+            f'<p style="color:rgba(237,233,216,0.6);margin:0 0 12px;">Syllabus coverage</p>'
+            f'<div style="background:#1A2235;border-radius:8px;height:12px;overflow:hidden;margin-bottom:8px;">'
+            f'<div style="width:{coverage_pct}%;height:100%;background:#D4AF37;"></div>'
             f"</div>"
-            f"<p style='color:#EDE9D8;margin:0 0 16px;'>{coverage_pct}% covered — <strong>{topics_remaining}</strong> topics still to cover</p>"
-            f"<p style='color:#D4AF37;margin:0 0 8px;font-size:13px;'>Top topics to focus on:</p>"
-            f"<ul style='margin:0 0 24px;padding-left:20px;'>{topics_list_html}</ul>"
-            f"<p style='margin:0 0 12px;'>"
-            f"<a href='{timetable_url}' style='display:inline-block;background:#1A2235;border:1px solid #D4AF37;"
-            f"padding:10px 16px;border-radius:8px;margin-right:8px;'>Open Timetable</a>"
-            f"<a href='{syllabus_url}' style='display:inline-block;background:#1A2235;border:1px solid #D4AF37;"
-            f"padding:10px 16px;border-radius:8px;'>View Syllabus</a>"
+            f'<p style="color:#EDE9D8;margin:0 0 12px;">{coverage_pct}% covered — <strong style="color:#EDE9D8;">{topics_remaining}</strong> topics still to cover</p>'
+            f'<p style="color:#D4AF37;margin:0 0 12px;font-size:13px;">Top topics to focus on:</p>'
+            f'<ul style="margin:0 0 24px;padding-left:20px;color:#EDE9D8;">{topics_list_html}</ul>'
+            f'<p style="color:#EDE9D8;margin:0 0 12px;">'
+            f'<a href="{timetable_url}" style="display:inline-block;background:#1A2235;border:1px solid #D4AF37;color:#D4AF37;'
+            f'padding:10px 16px;border-radius:8px;margin-right:8px;text-decoration:none;">Open Timetable</a>'
+            f'<a href="{syllabus_url}" style="display:inline-block;background:#1A2235;border:1px solid #D4AF37;color:#D4AF37;'
+            f'padding:10px 16px;border-radius:8px;text-decoration:none;">View Syllabus</a>'
             f"</p>"
-            f"<p style='color:#EDE9D8;font-style:italic;margin-top:16px;'>{closing_line}</p>"
+            f'<p style="color:#EDE9D8;margin:0 0 12px;font-style:italic;">{closing_line}</p>'
         )  # end inner_html
 
         email_html = get_email_wrapper(inner_html, "Exam Alert")  # wrap with shared template.
@@ -1067,7 +1078,7 @@ def _build_trigger_daily_sessions_html(sessions: List[Dict[str, Any]]) -> str:  
     """Build div-per-session HTML for trigger-daily email body."""
 
     if not sessions:  # no incomplete sessions today.
-        return "<p style='color:rgba(237,233,216,0.6);font-size:13px;'>No sessions scheduled for today</p>"  # empty copy.
+        return '<p style="color:rgba(237,233,216,0.6);margin:0 0 12px;font-size:13px;">No sessions scheduled for today</p>'  # empty copy.
 
     parts: List[str] = []  # accumulated session divs.
     for session in sessions:
@@ -1083,9 +1094,9 @@ def _build_trigger_daily_sessions_html(sessions: List[Dict[str, Any]]) -> str:  
         start_time = _format_time_hh_mm(session.get("start_time"))
         end_time = _format_time_hh_mm(session.get("end_time"))
         parts.append(
-            '<div style="padding:8px 0;border-bottom:1px solid rgba(212,175,55,0.1)">'
-            f'<span style="color:#D4AF37;font-weight:500">{subject}</span> — {topic}<br>'
-            f'<span style="color:rgba(237,233,216,0.5);font-size:12px">{start_time} – {end_time}</span>'
+            '<div style="padding:8px 0;border-bottom:1px solid rgba(212,175,55,0.1);color:#EDE9D8;">'
+            f'<span style="color:#D4AF37;font-weight:500;">{subject}</span> — <span style="color:#EDE9D8;">{topic}</span><br>'
+            f'<span style="color:rgba(237,233,216,0.6);font-size:12px;">{start_time} – {end_time}</span>'
             "</div>"
         )
     return "".join(parts)  # concatenated session HTML
@@ -1111,7 +1122,7 @@ def _build_trigger_weekly_exam_html(exam_dates: Dict[str, str]) -> str:  # HTML 
     """Build exam countdown rows for trigger-weekly email."""
 
     if not exam_dates:  # no dates configured.
-        return "<p style='color:rgba(237,233,216,0.5);font-size:12px;'>No exam dates on file yet.</p>"  # placeholder.
+        return '<p style="color:rgba(237,233,216,0.6);margin:0 0 12px;font-size:12px;">No exam dates on file yet.</p>'  # placeholder.
 
     lines: List[str] = []  # HTML lines per subject.
     today = date.today()  # calendar today for day diff.
@@ -1128,11 +1139,11 @@ def _build_trigger_weekly_exam_html(exam_dates: Dict[str, str]) -> str:  # HTML 
         colour = _trigger_weekly_exam_row_color(days)  # red / gold / green.
         label = SUBJECT_LABELS.get(subject_key, subject_key.title())  # display name.
         lines.append(  # one row per subject.
-            f'<p style="color:{colour};font-size:13px;margin:4px 0;">'
-            f"<strong>{label}</strong> — {days} days remaining"
+            f'<p style="color:{colour};margin:0 0 12px;font-size:13px;">'
+            f'<strong style="color:{colour};">{label}</strong> — {days} days remaining'
             f"</p>"
         )  # end row
-    return "".join(lines) if lines else "<p style='color:rgba(237,233,216,0.5);'>No exam dates on file yet.</p>"  # fallback
+    return "".join(lines) if lines else '<p style="color:rgba(237,233,216,0.6);margin:0 0 12px;">No exam dates on file yet.</p>'  # fallback
 
 
 # ============================================================
@@ -1177,18 +1188,14 @@ async def trigger_daily_reminders() -> TriggerBatchResponse:  # no auth; loops a
 
             title = "Your Study Sessions Today"  # STEP 3f — email wrapper title.
             content = (  # STEP 3f — inner HTML body per n8n spec.
-                f"<h2 style=\"color:#EDE9D8;font-family:Georgia,serif;"
-                f"font-size:20px;margin:0 0 8px\">"
+                f'<h2 style="color:#EDE9D8;font-family:Georgia,serif;margin:0 0 12px;font-size:20px;">'
                 f"Good morning, {first_name}!</h2>"
-                f"<p style=\"color:rgba(237,233,216,0.6);font-size:13px;"
-                f"margin:0 0 20px\">"
+                f'<p style="color:rgba(237,233,216,0.6);margin:0 0 12px;font-size:13px;">'
                 f"Here are your study sessions for today:</p>"
                 f"{sessions_html}"
-                f"<div style=\"margin-top:20px;padding:14px 16px;"
-                f"background:rgba(212,175,55,0.08);"
-                f"border-left:2px solid #D4AF37;border-radius:6px\">"
-                f"<p style=\"color:rgba(237,233,216,0.7);font-size:12px;"
-                f"margin:0\">"
+                f'<div style="margin-top:20px;padding:14px 16px;background:rgba(212,175,55,0.08);'
+                f'border-left:2px solid #D4AF37;border-radius:6px;color:#EDE9D8;">'
+                f'<p style="color:rgba(237,233,216,0.6);margin:0 0 12px;font-size:12px;">'
                 f"Open AscendAI to mark sessions complete and "
                 f"track your progress.</p>"
                 f"</div>"
@@ -1265,44 +1272,25 @@ async def trigger_weekly_reminders() -> TriggerBatchResponse:  # no auth; loops 
 
             title = "Your Weekly Progress Report"  # STEP 3h — wrapper title.
             content = (  # STEP 3h — email body per n8n spec.
-                f"<h2 style=\"color:#EDE9D8;font-family:Georgia,serif;"
-                f"font-size:20px;margin:0 0 16px\">"
+                f'<h2 style="color:#EDE9D8;font-family:Georgia,serif;margin:0 0 12px;font-size:20px;">'
                 f"Week of {monday.strftime('%d %b')} — "
                 f"{sunday.strftime('%d %b %Y')}</h2>"
-                f"<div style=\"display:grid;grid-template-columns:1fr 1fr;"
-                f"gap:12px;margin-bottom:20px\">"
-                f"<motion.div style=\"background:#1A2235;border-radius:8px;"
-                f"padding:14px;text-align:center\">"
-                f"<div style=\"font-size:24px;font-weight:700;"
-                f"color:#D4AF37;font-family:Georgia,serif\">"
-                f"{completed_sessions}/{total_sessions}</div>"
-                f"<div style=\"font-size:10px;color:rgba(237,233,216,0.5);"
-                f"text-transform:uppercase;letter-spacing:0.1em;"
-                f"margin-top:4px\">Sessions Done</motion.div>"
+                f'<div style="text-align:center;margin-bottom:20px;">'
+                f'<span style="display:inline-block;background:#1A2235;border:0.5px solid rgba(212,175,55,0.2);border-radius:8px;padding:14px;text-align:center;min-width:110px;margin:6px;">'
+                f'<span style="font-size:24px;font-weight:700;color:#D4AF37;font-family:Georgia,serif;">{completed_sessions}/{total_sessions}</span>'
+                f'<br><span style="font-size:10px;color:rgba(237,233,216,0.5);text-transform:uppercase;letter-spacing:0.1em;margin-top:4px;">Sessions Done</span></span>'
+                f'<span style="display:inline-block;background:#1A2235;border:0.5px solid rgba(212,175,55,0.2);border-radius:8px;padding:14px;text-align:center;min-width:110px;margin:6px;">'
+                f'<span style="font-size:24px;font-weight:700;color:#D4AF37;font-family:Georgia,serif;">{questions_asked}</span>'
+                f'<br><span style="font-size:10px;color:rgba(237,233,216,0.5);text-transform:uppercase;letter-spacing:0.1em;margin-top:4px;">Questions Asked</span></span>'
                 f"</div>"
-                f"<div style=\"background:#1A2235;border-radius:8px;"
-                f"padding:14px;text-align:center\">"
-                f"<div style=\"font-size:24px;font-weight:700;"
-                f"color:#D4AF37;font-family:Georgia,serif\">"
-                f"{questions_asked}</div>"
-                f"<motion.div style=\"font-size:10px;color:rgba(237,233,216,0.5);"
-                f"text-transform:uppercase;letter-spacing:0.1em;"
-                f"margin-top:4px\">Questions Asked</motion.div>"
-                f"</div>"
-                f"</div>"
-                f"<h3 style=\"color:rgba(237,233,216,0.5);font-size:10px;"
-                f"text-transform:uppercase;letter-spacing:0.1em;"
-                f"margin:0 0 10px\">Exam Countdown</h3>"
+                f'<h3 style="color:rgba(237,233,216,0.5);font-size:10px;text-transform:uppercase;letter-spacing:0.1em;margin:0 0 12px;">Exam Countdown</h3>'
                 f"{exam_countdown_html}"
-                f"<div style=\"margin-top:20px;padding:14px 16px;"
-                f"background:rgba(212,175,55,0.08);"
-                f"border-left:2px solid #D4AF37;border-radius:6px\">"
-                f"<p style=\"color:#EDE9D8;font-size:13px;"
-                f"font-style:italic;margin:0\">"
+                f'<div style="margin-top:20px;padding:14px 16px;background:rgba(212,175,55,0.08);'
+                f'border-left:2px solid #D4AF37;border-radius:6px;color:#EDE9D8;">'
+                f'<p style="color:#EDE9D8;margin:0 0 12px;font-size:13px;font-style:italic;">'
                 f"{motivational_message}</p>"
                 f"</div>"
             )  # end content
-            content = content.replace("<motion.div", "<div").replace("</motion.div>", "</div>")  # fix typos
 
             html = get_email_wrapper(content, title)  # wrap with shared template.
             _send_email(  # STEP 3i — send via Resend.
@@ -1388,54 +1376,29 @@ async def trigger_exam_alert_reminders() -> TriggerExamAlertResponse:  # no auth
 
                 title = f"EXAM ALERT — {subject_label} in {days_remaining} days"  # STEP 3e — title.
                 content = (  # STEP 3e — alert body per n8n spec.
-                    f'<div style="background:#E74C3C;padding:16px 20px;'
-                    f"border-radius:8px;margin-bottom:20px;text-align:center\">"
-                    f'<p style="color:white;font-size:11px;'
-                    f"text-transform:uppercase;letter-spacing:0.1em;"
-                    f'margin:0 0 4px">EXAM ALERT</p>'
-                    f'<p style="color:white;font-size:28px;font-weight:700;'
-                    f'font-family:Georgia,serif;margin:0">'
-                    f"{subject_label}</p>"
-                    f'<p style="color:rgba(255,255,255,0.8);font-size:16px;'
-                    f'margin:4px 0 0">'
-                    f"{days_remaining} days remaining</p>"
+                    f'<div style="background:#E74C3C;padding:16px 20px;border-radius:8px;margin-bottom:20px;text-align:center;">'
+                    f'<p style="color:#FFFFFF;margin:0 0 12px;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;">EXAM ALERT</p>'
+                    f'<p style="color:#FFFFFF;margin:0 0 12px;font-size:28px;font-weight:700;font-family:Georgia,serif;">{subject_label}</p>'
+                    f'<p style="color:rgba(255,255,255,0.8);margin:0 0 12px;font-size:16px;">{days_remaining} days remaining</p>'
                     f"</div>"
-                    f'<h3 style="color:rgba(237,233,216,0.5);font-size:10px;'
-                    f"text-transform:uppercase;letter-spacing:0.1em;"
-                    f'margin:0 0 8px">Syllabus Coverage</h3>'
-                    f'<div style="background:#1A2235;border-radius:6px;'
-                    f'padding:14px;margin-bottom:16px">'
-                    f'<div style="display:flex;justify-content:space-between;'
-                    f'margin-bottom:8px">'
-                    f'<span style="color:#EDE9D8;font-size:13px">'
-                    f"{covered} of {total} topics covered</span>"
-                    f'<span style="color:#D4AF37;font-size:13px;'
-                    f'font-weight:600">{coverage_pct}%</span>'
+                    f'<h3 style="color:rgba(237,233,216,0.5);font-size:10px;text-transform:uppercase;letter-spacing:0.1em;margin:0 0 12px;">Syllabus Coverage</h3>'
+                    f'<div style="background:#1A2235;border-radius:6px;padding:14px;margin-bottom:16px;color:#EDE9D8;">'
+                    f'<div style="margin-bottom:8px;">'
+                    f'<span style="color:#EDE9D8;font-size:13px;">{covered} of {total} topics covered</span> '
+                    f'<span style="color:#D4AF37;font-size:13px;font-weight:600;">{coverage_pct}%</span>'
                     f"</div>"
-                    f'<div style="background:rgba(255,255,255,0.1);'
-                    f'border-radius:3px;height:4px">'
-                    f'<div style="background:#D4AF37;height:4px;'
-                    f'border-radius:3px;width:{coverage_pct}%"></div>'
+                    f'<div style="background:rgba(255,255,255,0.1);border-radius:3px;height:4px;">'
+                    f'<div style="background:#D4AF37;height:4px;border-radius:3px;width:{coverage_pct}%;"></div>'
                     f"</div>"
                     f"</div>"
-                    f'<h3 style="color:rgba(237,233,216,0.5);font-size:10px;'
-                    f"text-transform:uppercase;letter-spacing:0.1em;"
-                    f'margin:0 0 8px">Topics Still To Cover</h3>'
+                    f'<h3 style="color:rgba(237,233,216,0.5);font-size:10px;text-transform:uppercase;letter-spacing:0.1em;margin:0 0 12px;">Topics Still To Cover</h3>'
                     f"{topics_html}"
-                    f'<div style="margin-top:20px;display:flex;gap:10px">'
-                    f'<a href="{timetable_url}"'
-                    f' style="flex:1;background:#D4AF37;color:#0A0F1E;'
-                    f"padding:10px;border-radius:6px;text-align:center;"
-                    f'text-decoration:none;font-size:12px;font-weight:600">'
-                    f"Open Timetable</a>"
-                    f'<a href="{syllabus_url}"'
-                    f' style="flex:1;background:transparent;'
-                    f"color:#D4AF37;padding:10px;border-radius:6px;"
-                    f"text-align:center;text-decoration:none;"
-                    f'font-size:12px;font-weight:600;'
-                    f'border:0.5px solid #D4AF37">'
-                    f"View Syllabus</a>"
-                    f"</div>"
+                    f'<p style="color:#EDE9D8;margin:0 0 12px;">'
+                    f'<a href="{timetable_url}" style="display:inline-block;background:#D4AF37;color:#0A0F1E;'
+                    f'padding:10px 16px;border-radius:6px;text-align:center;text-decoration:none;font-size:12px;font-weight:600;margin-right:8px;">Open Timetable</a>'
+                    f'<a href="{syllabus_url}" style="display:inline-block;background:transparent;color:#D4AF37;'
+                    f'padding:10px 16px;border-radius:6px;text-align:center;text-decoration:none;font-size:12px;font-weight:600;border:0.5px solid #D4AF37;">View Syllabus</a>'
+                    f"</p>"
                 )  # end content
 
                 html = get_email_wrapper(content, title)  # full HTML document.
