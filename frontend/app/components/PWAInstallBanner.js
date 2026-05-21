@@ -130,13 +130,12 @@ export default function PWAInstallBanner() {
             exit={{ opacity: 0, y: 80 }}
             transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
             style={{
-              // Fixed to bottom centre of screen
               position: "fixed",
               bottom: "80px",
-              left: "50%",
-              transform: "translateX(-50%)",
-              // Responsive width — full width on tiny screens with padding
-              width: "min(400px, calc(100vw - 32px))",
+              left: "16px",
+              right: "16px",
+              maxWidth: "400px",
+              margin: "0 auto",
               background: "var(--card)",
               border: "0.5px solid var(--gold-dim)",
               borderRadius: "12px",

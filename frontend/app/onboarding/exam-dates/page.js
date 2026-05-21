@@ -61,6 +61,9 @@ function OnboardingExamDatesContent() {
   // POST /onboarding/exam-dates + localStorage mirror, then navigate.
   const handleNext = async () => {
     if (isSaving) return;
+    // Read fromEdit synchronously at the very start before any async operations
+    // This captures the URL param value before anything else runs
+    const fromEdit = searchParams.get("from") === "edit";
     setIsSaving(true);
 
     try {
@@ -112,16 +115,13 @@ function OnboardingExamDatesContent() {
       setIsSaving(false);
     }
 
-    console.log("[ExamDates] Proceeding to study-hours");
-    // Check if user came from edit mode — if yes stay on page, if no continue onboarding
-    const fromEdit = searchParams.get("from") === "edit";
+    // fromEdit was captured at the top of this function synchronously
+    // If editing from profile — show success message and stay on page
     if (fromEdit) {
-      // Show a success message instead of redirecting
       setSaved(true);
-      // Hide the success message after 3 seconds
       setTimeout(() => setSaved(false), 3000);
     } else {
-      // Normal onboarding flow — go to next step
+      // Normal onboarding — go to next step
       router.push("/onboarding/study-hours");
     }
   };
