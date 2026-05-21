@@ -3,24 +3,22 @@
 # ============================================================
 # WHAT THIS ROUTER HANDLES
 # ------------------------------------------------------------
-# The Note Summariser feature — everything n8n and the Notes
-# page need to turn Google Classroom posts into study notes.
+# The Note Summariser feature — AI note generation and listing.
 #
 #   POST /notes/summarise
-#     • Receives raw post content from n8n (text, YouTube URL,
+#     • Receives raw post content (text, YouTube URL,
 #       Drive link, or pre-extracted PDF text).
 #     • Optionally fetches a YouTube transcript.
 #     • Asks Groq (LLaMA-3.3 70B) for a Cambridge-style title
 #       and structured summary + key points.
 #     • Saves the row to the `notes` table in Supabase.
 #
-#   POST /notes/sync
-#     • Triggers the n8n workflow that polls Google Classroom.
-#     • Gracefully no-ops when N8N_WEBHOOK_URL is not set yet.
+#   POST /notes/generate
+#     • Generates one study note from a syllabus topic name via Groq.
 #
-#   POST /notes/trigger-sync
-#     • Internal n8n cron — loops all user_profiles and syncs each.
-#     • No auth — uses service-role Supabase client from database.py.
+#   POST /notes/upload-pdf
+#     • Extracts text from an uploaded PDF, identifies topics via Groq,
+#       and creates one note per topic in Supabase.
 #
 #   GET /notes/list
 #     • Returns paginated notes for the signed-in student,
@@ -41,7 +39,7 @@
 #   • Supabase Auth (admin) — JWT verification via service role.
 #   • Supabase Postgres — read subjects, read/write notes.
 #   • youtube-transcript-api — optional transcript for YouTube posts.
-#   • httpx — optional POST to n8n webhook on manual sync.
+#   • PyMuPDF (fitz) — PDF text extraction for upload-pdf.
 # ============================================================
 
 import json
@@ -51,12 +49,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+import fitz  # PyMuPDF — already in requirements.txt as PyMuPDF==1.27.2.3
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from database import supabase
-from routers.notifications import create_notification
 
 # ============================================================
 # CONFIGURATION CONSTANTS
@@ -78,7 +75,6 @@ GROQ_TEMPERATURE = 0.3
 NOTES_TABLE = "notes"
 SUBJECTS_TABLE = "subjects"
 PROFILES_TABLE = "profiles"
-USER_PROFILES_TABLE = "user_profiles"
 CLASSROOM_POSTS_TABLE = "google_classroom_posts"
 
 # Google OAuth client credentials — from backend/.env.
@@ -96,9 +92,6 @@ MAX_YOUTUBE_WORDS = 4000
 
 # How much content we send to the quick title Groq call.
 MAX_TITLE_CONTENT_WORDS = 500
-
-# n8n webhook URL — empty until n8n is deployed (see backend/.env).
-N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL") or ""
 
 # Regex patterns for common YouTube URL shapes.
 _YOUTUBE_WATCH_RE = re.compile(
@@ -151,24 +144,27 @@ class NotesSummariseResponse(BaseModel):
     message: Optional[str] = None
 
 
-class NotesSyncRequest(BaseModel):
-    # UUID of the student requesting a manual Classroom sync.
+class GenerateNoteRequest(BaseModel):
+    # UUID of the student requesting the note.
     user_id: str = Field(..., description="UUID of the student")
+    # UUID of the subject from the subjects table.
+    subject_id: str = Field(..., description="UUID of the subject from subjects table")
+    # The exact topic name from syllabus_topics table.
+    topic_name: str = Field(..., description="Topic name to generate notes for")
 
 
-class NotesSyncResponse(BaseModel):
-    synced: bool
+class GenerateNoteResponse(BaseModel):
+    note_id: str
+    title: str
+    summary_preview: str
+    key_points_count: int
     message: str
-    note: Optional[str] = None
 
 
-class NotesTriggerSyncResponse(BaseModel):
-    # Number of users whose Classroom sync webhook succeeded.
-    triggered: int
-    # Number of users skipped or failed (no tokens, refresh error, webhook error).
-    errors: int
-    # Total user_id rows returned from user_profiles.
-    total_users: int
+class UploadPDFResponse(BaseModel):
+    notes_created: int
+    titles: List[str]
+    message: str
 
 
 class NoteListItem(BaseModel):
@@ -836,227 +832,304 @@ def summarise_note(
 
 
 # ============================================================
-# ENDPOINT: POST /notes/sync
+# ENDPOINT: POST /notes/generate
 # ============================================================
-@router.post(
-    "/sync",
-    response_model=NotesSyncResponse,
-    summary="Trigger Google Classroom sync via n8n webhook",
-)
-async def sync_notes(
-    body: NotesSyncRequest,
+# Creates one study note from a syllabus topic name using Groq.
+# ============================================================
+@router.post("/generate", response_model=GenerateNoteResponse)
+def generate_note(
+    body: GenerateNoteRequest,
     verified_user_id: str = Depends(verify_bearer_token),
 ):
+    # STEP 1 — identity check: JWT subject must match body user_id.
     if body.user_id.strip() != verified_user_id.strip():
+        raise HTTPException(status_code=401, detail={"error": "Unauthorised — please log in"})
+
+    # STEP 2 — validate topic_name is not empty.
+    topic_name = (body.topic_name or "").strip()
+    if not topic_name:
+        raise HTTPException(status_code=422, detail={"error": "topic_name is required"})
+
+    # STEP 3 — fetch subject name and code from subjects table.
+    subject_row = _fetch_subject_row(body.subject_id.strip())
+    if not subject_row:
+        raise HTTPException(status_code=404, detail={"error": "Subject not found"})
+    subject_name = str(subject_row.get("name") or "").strip()
+    subject_code = str(subject_row.get("code") or "").strip()
+
+    # STEP 4 — build Groq system prompt (friendly tutor tone, JSON-only reply).
+    system_prompt = (
+        f"You are a genius friend who just aced Cambridge AS Level {subject_name}. "
+        f"You are explaining this topic to your friend Aisha who needs to actually understand it — not just memorise it.\n\n"
+        f"Your goal is ONE thing: make Aisha genuinely understand this topic so well she could explain it to someone else.\n\n"
+        f"How to write:\n"
+        f"- Talk like a real person. Short sentences when making a point. Longer ones when explaining.\n"
+        f"- Use analogies. Use real examples from Zambia — matatus, kwacha, Shoprite, MTN, load shedding.\n"
+        f"- If a diagram would help, describe it in words.\n"
+        f"- Call out common misconceptions — most students think X but actually...\n"
+        f"- No walls of text. Mix short and long paragraphs naturally.\n"
+        f"- Never use: Certainly, Of course, Furthermore, Moreover, In conclusion, In summary\n\n"
+        f"You MUST respond with ONLY this JSON structure and nothing else:\n\n"
+        f"{{\n"
+        f'  "title": "string — the topic name written naturally",\n'
+        f'  "summary": "string — your full explanation as one continuous block of plain text. No line breaks inside this string. No nested quotes.",\n'
+        f'  "key_points": ["string — write as many points as the topic needs. Each point must be a complete standalone sentence that captures one core idea so clearly that if Aisha only read the key points she would still understand the whole topic. Write them like a smart friend circling the most important things and saying — make sure you remember this."]\n'
+        f"}}\n\n"
+        f"CRITICAL JSON RULES:\n"
+        f"- summary must be a single flat string — no newlines inside it, no nested quotes\n"
+        f"- key_points must be a JSON array of plain strings\n"
+        f"- Do not put key_points inside the summary string\n"
+        f"- Do not use markdown inside any string value\n"
+        f"- The response must be valid JSON that can be parsed with json.loads()"
+    )
+
+    user_content = (
+        f"Generate comprehensive Cambridge AS Level notes for this topic:\n\n"
+        f"Subject: {subject_name} ({subject_code})\nTopic: {topic_name}"
+    )
+
+    # STEP 5 — call Groq with JSON mode for structured note output.
+    raw_response = _call_groq_text(
+        system_prompt=system_prompt,
+        user_content=user_content,
+        max_tokens=4096,
+        json_mode=True,
+    )
+
+    # STEP 6 — parse the JSON response from Groq.
+    parsed, parse_err = _parse_groq_json(raw_response)
+    if parsed is None:
+        print(f"[Notes] Generate note parse failed: {parse_err}")
         raise HTTPException(
-            status_code=401,
-            detail={"error": "Unauthorised — please log in"},
+            status_code=503,
+            detail={"error": "Failed to generate notes. Please try again."},
         )
 
-    webhook = (N8N_WEBHOOK_URL or "").strip()
+    title = (parsed.get("title") or topic_name).strip()
+    summary = (parsed.get("summary") or "").strip()
+    key_points_raw = parsed.get("key_points")
+    key_points = []
+    if isinstance(key_points_raw, list):
+        key_points = [str(p).strip() for p in key_points_raw if str(p or "").strip()]
 
-    if webhook:
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    webhook,
-                    json={
-                        "user_id": verified_user_id,
-                        "triggered_by": "manual_sync",
-                    },
-                    timeout=10.0,
-                )
-            if response.is_success:
-                create_notification(
-                    user_id=verified_user_id,
-                    type="notes",
-                    title="Notes Synced",
-                    message=(
-                        "Your Google Classroom notes have been "
-                        "updated. Check My Notes to see new content."
-                    ),
-                )
-                return NotesSyncResponse(
-                    synced=True,
-                    message=(
-                        "Sync triggered — checking Google Classroom for new posts."
-                    ),
-                )
-            print(
-                f"[Notes] n8n webhook returned HTTP {response.status_code}: "
-                f"{response.text[:200]!r}"
-            )
-            return NotesSyncResponse(
-                synced=False,
-                message="Sync requested but webhook returned an error.",
-                note="Partial success — try again shortly.",
-            )
-        except Exception as e:
-            print(f"[Notes] n8n webhook call failed: {type(e).__name__}: {e}")
-            return NotesSyncResponse(
-                synced=False,
-                message="Sync requested but webhook call failed.",
-                note="Partial success — try again shortly.",
-            )
+    if not summary:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "Failed to generate notes. Please try again."},
+        )
 
-    # Graceful fallback when n8n is not yet connected.
-    return NotesSyncResponse(
-        synced=False,
-        message=(
-            "Sync triggered. Google Classroom polling will begin shortly."
-        ),
-        note=(
-            "n8n webhook not configured yet — will activate when n8n is deployed"
-        ),
+    # STEP 7 — save to Supabase notes table (no google_post_id for topic-generated notes).
+    now = _now_iso()
+    insert_payload = {
+        "user_id": verified_user_id,
+        "subject_id": body.subject_id.strip(),
+        "google_post_id": None,
+        "title": title,
+        "summary": summary,
+        "key_points": key_points,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    try:
+        insert_result = supabase.table(NOTES_TABLE).insert(insert_payload).execute()
+        inserted = getattr(insert_result, "data", None) or []
+        if not inserted:
+            raise RuntimeError("Insert returned no rows.")
+        saved = inserted[0]
+        note_id = str(saved.get("id", ""))
+    except Exception as e:
+        print(f"[Notes] Generate note insert failed: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "Could not save note. Please try again."},
+        ) from e
+
+    return GenerateNoteResponse(
+        note_id=note_id,
+        title=title,
+        summary_preview=summary[:200],
+        key_points_count=len(key_points),
+        message="Note generated successfully",
     )
 
 
 # ============================================================
-# HELPER: _fetch_all_user_profile_ids — all students for n8n cron
+# ENDPOINT: POST /notes/upload-pdf
 # ============================================================
-def _fetch_all_user_profile_ids() -> List[str]:
-    # Query user_profiles via service-role client (database.py supabase).
-    try:  # wrap Supabase read so cron still returns partial results on failure.
-        result = (  # PostgREST query chain.
-            supabase.from_("profiles")  # all onboarded students.
-            .select("user_id")  # only need UUID column for the batch loop.
-            .execute()  # run query with service role (bypasses RLS).
-        )  # end chain
-        rows = getattr(result, "data", None) or []  # normalise to list of dicts.
-    except Exception as e:  # network or schema error.
-        print(  # log for uvicorn console — n8n can alert on empty batches.
-            f"[Notes] user_profiles list failed: {type(e).__name__}: {e}"
-        )  # end print
-        return []  # empty list — caller reports total_users=0.
-
-    user_ids: List[str] = []  # accumulator for non-empty UUID strings.
-    for row in rows:  # one user_profiles row per student.
-        uid = str(row.get("user_id") or "").strip()  # coerce UUID to str.
-        if uid:  # skip blank ids from malformed rows.
-            user_ids.append(uid)  # collect for trigger loop.
-    return user_ids  # full student list for hourly sync.
-
-
+# Extracts PDF text, discovers topics via Groq, generates one note per topic.
 # ============================================================
-# HELPER: _user_has_usable_google_tokens — same check as /classroom/posts
-# ============================================================
-def _user_has_usable_google_tokens(user_id: str) -> bool:
-    # Load google_* columns from profiles (same helper as Classroom routes).
-    profile = _fetch_profile_google_tokens(user_id)  # read profiles row via service role.
-    if not profile:  # student never connected Google or row missing.
-        return False  # count as error in trigger-sync batch.
+@router.post("/upload-pdf", response_model=UploadPDFResponse)
+async def upload_pdf_notes(
+    file: UploadFile = File(...),
+    subject_id: str = Form(...),
+    user_id: str = Form(...),
+    verified_user_id: str = Depends(verify_bearer_token),
+):
+    # STEP 1 — identity check: form user_id must match JWT subject.
+    if user_id.strip() != verified_user_id.strip():
+        raise HTTPException(status_code=401, detail={"error": "Unauthorised — please log in"})
 
-    access_token = (profile.get("google_access_token") or "").strip()  # short-lived token.
-    refresh_token = (profile.get("google_refresh_token") or "").strip()  # long-lived refresh secret.
-    if not access_token and not refresh_token:  # Classroom not linked.
-        return False  # cannot sync without OAuth tokens.
+    # STEP 2 — validate file is a PDF by extension.
+    filename = (file.filename or "").lower()
+    if not filename.endswith(".pdf"):
+        raise HTTPException(status_code=422, detail={"error": "Only PDF files are supported."})
 
-    # Refresh when expired — mirrors GET /classroom/posts before API calls.
-    try:  # validate or refresh access token with Google OAuth library.
-        _get_valid_google_access_token(profile)  # may write new token back to profiles.
-    except HTTPException:  # expired refresh — student must reconnect Google.
-        return False  # count as error.
-    except Exception as e:  # unexpected Google client failure.
-        print(  # log per-user failure without stopping the batch.
-            f"[Notes] Google token check failed for {user_id!r}: "
-            f"{type(e).__name__}: {e}"
-        )  # end print
-        return False  # count as error.
+    # STEP 3 — read file bytes from the multipart upload.
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=422, detail={"error": "Uploaded file is empty."})
 
-    return True  # tokens OK — safe to trigger n8n sync for this user.
+    # STEP 4 — extract text from PDF using PyMuPDF (fitz).
+    try:
+        pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
+        full_text = ""
+        for page_num in range(len(pdf_document)):
+            page = pdf_document[page_num]
+            full_text += page.get_text()
+        pdf_document.close()
+    except Exception as e:
+        print(f"[Notes] PDF extraction failed: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "Could not read PDF. Please use a text-based PDF."},
+        ) from e
 
+    if not full_text.strip():
+        raise HTTPException(status_code=422, detail={"error": "No text found in PDF."})
 
-# ============================================================
-# HELPER: _post_n8n_notes_sync_webhook — core logic from POST /notes/sync
-# ============================================================
-async def _post_n8n_notes_sync_webhook(user_id: str, triggered_by: str) -> bool:
-    # Same webhook POST as sync_notes — does not modify that endpoint.
-    n8n_url = os.getenv("N8N_WEBHOOK_URL", "")
-    if not n8n_url:
-        # No webhook URL configured — skip silently
-        return
+    # STEP 5 — fetch subject info from subjects table.
+    subject_row = _fetch_subject_row(subject_id.strip())
+    if not subject_row:
+        raise HTTPException(status_code=404, detail={"error": "Subject not found"})
+    subject_name = str(subject_row.get("name") or "").strip()
+    subject_code = str(subject_row.get("code") or "").strip()
 
-    try:  # httpx async POST — one request per student.
-        async with httpx.AsyncClient() as client:  # short-lived HTTP client.
-            response = await client.post(  # call n8n webhook (same body as /notes/sync).
-                n8n_url,  # N8N_WEBHOOK_URL target.
-                json={  # JSON body n8n expects.
-                    "user_id": user_id,  # which student to poll Classroom for.
-                    "triggered_by": triggered_by,  # scheduled_sync vs manual_sync.
-                },  # end json
-                timeout=10.0,  # do not block the hourly cron too long.
-            )  # end post
-        if response.is_success:  # HTTP 2xx from n8n.
-            return True  # sync successfully queued for this user.
-        print(  # log non-success status for debugging.
-            f"[Notes] trigger-sync webhook HTTP {response.status_code} "
-            f"for user {user_id!r}: {response.text[:200]!r}"
-        )  # end print
-        return False  # n8n rejected or errored.
-    except Exception as e:  # network timeout or DNS failure.
-        print(  # log and continue batch.
-            f"[Notes] trigger-sync webhook failed for {user_id!r}: "
-            f"{type(e).__name__}: {e}"
-        )  # end print
-        return False  # count as error for this user.
+    # STEP 6 — ask Groq to identify the distinct topics in this PDF.
+    topic_system_prompt = """You are a Cambridge AS Level curriculum expert.
+Your job is to identify the distinct topics covered in this study material.
+Return ONLY a JSON array of topic name strings.
+Each topic should be a clear concise phrase — like a chapter heading.
+Maximum 10 topics. Minimum 1 topic.
+No preamble. No explanation. Just the raw JSON array.
+Example: ["Supply and Demand", "Price Elasticity", "Market Structures"]"""
 
+    topic_user_content = (
+        f"Subject: {subject_name}\n"
+        f"Identify all the distinct topics in this study material:\n\n"
+        f"{full_text[:6000]}"
+    )
 
-# ================================================
-# INTERNAL TRIGGER — called by n8n every hour
-# No auth required — uses service role key
-# n8n URL: POST /notes/trigger-sync
-# No Authorization header needed
-# ================================================
-@router.post(
-    "/trigger-sync",
-    response_model=NotesTriggerSyncResponse,
-    summary="Batch-trigger Google Classroom sync for all students (n8n cron)",
-)
-async def trigger_notes_sync() -> NotesTriggerSyncResponse:
-    # STEP 1 — load every student UUID from user_profiles (service role).
-    user_ids = _fetch_all_user_profile_ids()  # all user_id values from Postgres.
-    total_users = len(user_ids)  # denominator for n8n monitoring.
-    triggered_count = 0  # successful webhook calls.
-    error_count = 0  # missing tokens or failed webhook calls.
+    raw_topics = _call_groq_text(
+        system_prompt=topic_system_prompt,
+        user_content=topic_user_content,
+        max_tokens=500,
+        json_mode=True,
+    )
 
-    n8n_url = os.getenv("N8N_WEBHOOK_URL", "")
-    if not n8n_url:
-        # No webhook URL configured — skip silently
-        return NotesTriggerSyncResponse(
-            triggered=triggered_count,
-            errors=error_count,
-            total_users=total_users,
+    # STEP 7 — parse the topics list from Groq response.
+    try:
+        topics_text = raw_topics.strip()
+        if topics_text.startswith("```"):
+            topics_text = topics_text.split("\n", 1)[1] if "\n" in topics_text else topics_text[3:]
+        if topics_text.endswith("```"):
+            topics_text = topics_text[:-3]
+        topics_list = json.loads(topics_text.strip())
+        if not isinstance(topics_list, list):
+            topics_list = [subject_name + " Overview"]
+        topics_list = [str(t).strip() for t in topics_list if str(t or "").strip()][:10]
+    except Exception as e:
+        print(f"[Notes] PDF topic parse failed: {type(e).__name__}: {e}")
+        topics_list = [subject_name + " — Study Notes"]
+
+    if not topics_list:
+        topics_list = [subject_name + " — Study Notes"]
+
+    # STEP 8 — for each topic generate a full note and save it to Supabase.
+    created_notes = []
+    now = _now_iso()
+
+    for topic_name in topics_list:
+        try:
+            # Build the note generation prompt for this specific topic.
+            note_system = f"""You are a genius friend who just aced Cambridge AS Level {subject_name}.
+Explain this specific topic to Aisha like you are helping her understand it over WhatsApp — clear, real, no fluff.
+Make her actually get the concept — not just memorise words.
+Use Zambian examples where they help. Use Kwacha, Lusaka, MTN, Shoprite, load shedding — whatever makes it click.
+Use the uploaded material as context but explain it in your own words.
+
+Respond ONLY with a valid JSON object:
+{{
+  "title": "The topic name written naturally",
+  "summary": "Explain this like a smart friend. Make it click. No walls of text. Real examples. Short punchy sentences mixed with explanations. Use as much space as the topic needs — no more, no less.",
+  "key_points": ["As many points as needed to truly understand and apply this topic in an exam — each as one clear sentence"]
+}}
+No markdown. No bullet points inside summary. Sound like a real person."""
+
+            note_user = (
+                f"Subject: {subject_name} ({subject_code})\n"
+                f"Topic: {topic_name}\n\n"
+                f"Context from uploaded material:\n{full_text[:3000]}"
+            )
+
+            raw_note = _call_groq_text(
+                system_prompt=note_system,
+                user_content=note_user,
+                max_tokens=2048,
+                json_mode=True,
+            )
+
+            # Parse the JSON note from Groq.
+            parsed, _ = _parse_groq_json(raw_note)
+            if not parsed:
+                continue
+
+            title = (parsed.get("title") or topic_name).strip()
+            summary = (parsed.get("summary") or "").strip()
+            key_points_raw = parsed.get("key_points")
+            key_points = []
+            if isinstance(key_points_raw, list):
+                key_points = [str(p).strip() for p in key_points_raw if str(p or "").strip()]
+
+            if not summary:
+                continue
+
+            # Save this topic's note to Supabase.
+            insert_payload = {
+                "user_id": verified_user_id,
+                "subject_id": subject_id.strip(),
+                "google_post_id": None,
+                "title": title,
+                "summary": summary,
+                "key_points": key_points,
+                "created_at": now,
+                "updated_at": now,
+            }
+
+            insert_result = supabase.table(NOTES_TABLE).insert(insert_payload).execute()
+            inserted = getattr(insert_result, "data", None) or []
+            if inserted:
+                created_notes.append(title)
+
+        except Exception as e:
+            # If one topic fails keep going — do not crash the whole upload.
+            print(
+                f"[Notes] PDF note generation failed for topic {topic_name!r}: "
+                f"{type(e).__name__}: {e}"
+            )
+            continue
+
+    if not created_notes:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "Could not generate notes from this PDF. Please try again."},
         )
 
-    # STEP 2 — process each user independently so one failure does not stop the batch.
-    for user_id in user_ids:  # foreach student in user_profiles.
-        try:  # isolate per-user errors.
-            # STEP 2a — ensure Google tokens exist and are refreshable (profiles table).
-            if not _user_has_usable_google_tokens(user_id):  # same token path as Classroom.
-                error_count += 1  # skip user without usable Google session.
-                continue  # next student.
-
-            # STEP 2b — fire the same n8n webhook payload as manual POST /notes/sync.
-            ok = await _post_n8n_notes_sync_webhook(  # POST to N8N_WEBHOOK_URL.
-                user_id, triggered_by="scheduled_sync"  # distinguish from manual_sync.
-            )  # end await
-            if ok:  # n8n accepted the sync job.
-                triggered_count += 1  # success tally.
-            else:  # webhook missing or HTTP error.
-                error_count += 1  # failure tally.
-        except Exception as e:  # guard against unexpected bugs per iteration.
-            print(  # log and continue — never crash the whole hourly cron.
-                f"[Notes] trigger-sync unexpected error for {user_id!r}: "
-                f"{type(e).__name__}: {e}"
-            )  # end print
-            error_count += 1  # count as error.
-
-    # STEP 3 — summary JSON for n8n monitoring.
-    return NotesTriggerSyncResponse(  # spec response shape for n8n HTTP node.
-        triggered=triggered_count,  # int — syncs queued successfully.
-        errors=error_count,  # int — failures (tokens or webhook).
-        total_users=total_users,  # int — rows read from user_profiles.
-    )  # end return
+    return UploadPDFResponse(
+        notes_created=len(created_notes),
+        titles=created_notes,
+        message=f"Created {len(created_notes)} notes from your PDF",
+    )
 
 
 # ============================================================

@@ -869,6 +869,30 @@ export default function NotesPage() {
   );
   const [generateState, setGenerateState] = useState({});
 
+  // activeMode controls which panel is shown at the top — 'generate' or 'upload'
+  const [activeMode, setActiveMode] = useState("generate");
+
+  // For Generate Notes mode — the subject UUID Aisha selected
+  const [genSubjectId, setGenSubjectId] = useState("");
+
+  // For Generate Notes mode — the list of syllabus topics for the selected subject
+  const [syllabusTopics, setSyllabusTopics] = useState([]);
+
+  // For Generate Notes mode — the topic name Aisha selected from the dropdown
+  const [genTopicName, setGenTopicName] = useState("");
+
+  // For Generate Notes mode — true while the AI is generating the note
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  // For Upload PDF mode — the subject UUID Aisha selected
+  const [uploadSubjectId, setUploadSubjectId] = useState("");
+
+  // For Upload PDF mode — the PDF file Aisha selected
+  const [uploadFile, setUploadFile] = useState(null);
+
+  // For Upload PDF mode — true while the PDF is being processed
+  const [isUploading, setIsUploading] = useState(false);
+
   // Refs so async closures (the fetch handlers below) always
   // see the freshest cached values without being re-created in
   // a useCallback dependency array. Same pattern the homework
@@ -1204,6 +1228,230 @@ export default function NotesPage() {
   };
 
 
+  // handleSubjectChange — called when Aisha picks a subject in Generate Notes mode
+  // Fetches the syllabus topics for that subject from Supabase so the topic dropdown fills
+  const handleSubjectChange = async (subjectId) => {
+    // Save the selected subject UUID to state
+    setGenSubjectId(subjectId);
+    // Clear the previously selected topic when subject changes
+    setGenTopicName("");
+    // Clear the topics list while we load new ones
+    setSyllabusTopics([]);
+
+    // If no subject selected, stop here
+    if (!subjectId) return;
+
+    try {
+      // Get the current user session for auth
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token ?? null;
+      if (!token) return;
+
+      // Find the subject key (e.g. 'economics') from the subject UUID
+      // We need the key to query syllabus_topics which stores subject as a key not UUID
+      const subjectMeta = subjectIndex.byId[subjectId];
+      if (!subjectMeta) return;
+      const subjectKey = subjectMeta.key;
+
+      // Query Supabase syllabus_topics table directly for this subject's topics
+      // Filter by the authenticated user's ID (RLS handles this automatically)
+      const { data: topicRows, error } = await supabase
+        .from("syllabus_topics")
+        .select("id, topic_name")
+        .eq("subject", subjectKey)
+        .order("topic_name", { ascending: true });
+
+      if (error) {
+        console.warn("[Notes] Could not load syllabus topics:", error);
+        return;
+      }
+
+      // Save the topics list to state so the dropdown renders them
+      setSyllabusTopics(topicRows ?? []);
+    } catch (err) {
+      console.warn("[Notes] handleSubjectChange error:", err);
+    }
+  };
+
+
+  // handleGenerateNote — called when Aisha clicks Generate Note
+  // Calls POST /notes/generate on the backend, saves the note, refreshes the list
+  const handleGenerateNote = async () => {
+    // Do nothing if already generating or if subject/topic not selected
+    if (isGenerating || !genSubjectId || !genTopicName) return;
+    setIsGenerating(true);
+
+    try {
+      // Get the current session token for the Authorization header
+      const { data: sessionData, error: sessionError } =
+        await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token ?? null;
+      const userId = sessionData?.session?.user?.id ?? currentUserIdRef.current;
+
+      if (sessionError || !token || !userId) {
+        throw new Error("Your session has expired. Please sign in again.");
+      }
+
+      // Call POST /notes/generate on the FastAPI backend
+      const response = await fetch(`${API_URL}/notes/generate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        // Send the user ID, subject UUID, and topic name
+        body: JSON.stringify({
+          user_id: userId,
+          subject_id: genSubjectId,
+          topic_name: genTopicName,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to generate note. Please try again.");
+      }
+
+      // Show success toast
+      setSyncToastMsg("Note generated successfully!");
+      setSyncToast("success");
+
+      // Reset the form so Aisha can generate another note
+      setGenTopicName("");
+
+      // Refresh the notes list so the new note appears immediately
+      // We trigger this by toggling activeFilter which re-runs Effect 2
+      setActiveFilter((prev) => prev);
+      // Force a re-fetch by briefly setting loading true
+      setNotesLoading(true);
+
+      // Re-fetch notes from the backend
+      const { data: newSessionData } = await supabase.auth.getSession();
+      const newToken = newSessionData?.session?.access_token ?? null;
+      const newUserId = newSessionData?.session?.user?.id ?? currentUserIdRef.current;
+      if (newToken && newUserId) {
+        const params = new URLSearchParams({
+          user_id: newUserId,
+          limit: "50",
+          offset: "0",
+        });
+        const listResponse = await fetch(
+          `${API_URL}/notes/list?${params.toString()}`,
+          {
+            headers: { Authorization: `Bearer ${newToken}` },
+          }
+        );
+        if (listResponse.ok) {
+          const listBody = await listResponse.json().catch(() => ({}));
+          const noteRows = Array.isArray(listBody?.data) ? listBody.data : [];
+          if (noteRows.length > 0) {
+            setNotes(noteRows);
+            setUsingMock(false);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[Notes] Generate note failed:", err);
+      setSyncToastMsg("Failed to generate note. Please try again.");
+      setSyncToast("error");
+    } finally {
+      // Always stop the loading spinner when done
+      setIsGenerating(false);
+      setNotesLoading(false);
+    }
+  };
+
+
+  // handleUploadPDF — called when Aisha clicks Upload and Generate
+  // Sends the PDF to POST /notes/upload-pdf, saves all notes, refreshes the list
+  const handleUploadPDF = async () => {
+    // Do nothing if already uploading or if subject/file not selected
+    if (isUploading || !uploadSubjectId || !uploadFile) return;
+    setIsUploading(true);
+
+    try {
+      // Get the current session token
+      const { data: sessionData, error: sessionError } =
+        await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token ?? null;
+      const userId = sessionData?.session?.user?.id ?? currentUserIdRef.current;
+
+      if (sessionError || !token || !userId) {
+        throw new Error("Your session has expired. Please sign in again.");
+      }
+
+      // Build a FormData object — required for file uploads (not JSON)
+      const formData = new FormData();
+      // Attach the PDF file
+      formData.append("file", uploadFile);
+      // Attach the subject UUID
+      formData.append("subject_id", uploadSubjectId);
+      // Attach the user ID
+      formData.append("user_id", userId);
+
+      // Call POST /notes/upload-pdf — do NOT set Content-Type header manually
+      // The browser sets it automatically with the correct multipart boundary
+      const response = await fetch(`${API_URL}/notes/upload-pdf`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to process PDF. Please try again.");
+      }
+
+      const result = await response.json().catch(() => ({}));
+      const count = result?.notes_created ?? 0;
+
+      // Show success toast with how many notes were created
+      setSyncToastMsg(
+        `${count} note${count !== 1 ? "s" : ""} created from your PDF!`
+      );
+      setSyncToast("success");
+
+      // Reset the upload form
+      setUploadFile(null);
+      setUploadSubjectId("");
+
+      // Re-fetch notes so the new ones appear immediately
+      const { data: newSessionData } = await supabase.auth.getSession();
+      const newToken = newSessionData?.session?.access_token ?? null;
+      const newUserId = newSessionData?.session?.user?.id ?? currentUserIdRef.current;
+      if (newToken && newUserId) {
+        const params = new URLSearchParams({
+          user_id: newUserId,
+          limit: "50",
+          offset: "0",
+        });
+        const listResponse = await fetch(
+          `${API_URL}/notes/list?${params.toString()}`,
+          {
+            headers: { Authorization: `Bearer ${newToken}` },
+          }
+        );
+        if (listResponse.ok) {
+          const listBody = await listResponse.json().catch(() => ({}));
+          const noteRows = Array.isArray(listBody?.data) ? listBody.data : [];
+          if (noteRows.length > 0) {
+            setNotes(noteRows);
+            setUsingMock(false);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[Notes] PDF upload failed:", err);
+      setSyncToastMsg("Failed to process PDF. Please try again.");
+      setSyncToast("error");
+    } finally {
+      // Always stop the loading spinner when done
+      setIsUploading(false);
+      setNotesLoading(false);
+    }
+  };
+
+
   // ───────────────────────────────────────────────────────────
   // HANDLER: handleGenerateForNote
   // ───────────────────────────────────────────────────────────
@@ -1515,86 +1763,317 @@ export default function NotesPage() {
         </span>
       </div>
 
+      {/* Page header — title on the left */}
       <header
         style={{
-          padding: "20px var(--page-padding) 0",
           display: "flex",
+          alignItems: "center",
           justifyContent: "space-between",
-          alignItems: "flex-start",
+          margin: "0 var(--page-padding)",
+          paddingTop: "32px",
+          paddingBottom: "0",
           gap: "16px",
           flexWrap: "wrap",
         }}
       >
-        <div>
-          <h1
-            style={{
-              fontFamily: "'Playfair Display', serif",
-              fontSize: "28px",
-              color: "var(--text)",
-              fontWeight: 700,
-              margin: 0,
-            }}
-          >
-            My Notes
-          </h1>
-          <p
+        {/* Page title */}
+        <h1
+          style={{
+            fontFamily: "'Playfair Display', serif",
+            fontSize: "clamp(22px, 4vw, 28px)",
+            color: "var(--text)",
+            fontWeight: 700,
+            margin: 0,
+          }}
+        >
+          My Notes
+        </h1>
+
+        {/* Mode switcher — two buttons to switch between Generate and Upload */}
+        <div
+          style={{
+            display: "flex",
+            gap: "8px",
+            background: "var(--card)",
+            border: "0.5px solid var(--gold-border)",
+            borderRadius: "8px",
+            padding: "4px",
+          }}
+        >
+          {/* Generate Notes mode button */}
+          <button
+            type="button"
+            onClick={() => setActiveMode("generate")}
             style={{
               fontFamily: "Inter, sans-serif",
               fontSize: "13px",
-              color: "var(--text-muted)",
-              marginTop: "4px",
-              marginBottom: 0,
+              fontWeight: 500,
+              padding: "8px 16px",
+              borderRadius: "6px",
+              border: "none",
+              cursor: "pointer",
+              transition: "background 200ms ease, color 200ms ease",
+              background:
+                activeMode === "generate" ? "var(--gold)" : "transparent",
+              color:
+                activeMode === "generate" ? "var(--bg)" : "var(--text-muted)",
             }}
           >
-            Auto-generated from your Google Classroom
-          </p>
-        </div>
-        <button
-          type="button"
-          className="notes-sync-btn"
-          onClick={handleSync}
-          disabled={isSyncing}
-          style={{
-            background: "transparent",
-            border: "0.5px solid var(--gold-border-active)",
-            borderRadius: "8px",
-            padding: "10px 16px",
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            fontFamily: "Inter, sans-serif",
-            fontSize: "13px",
-            fontWeight: 500,
-            color: "var(--gold)",
-            cursor: isSyncing ? "wait" : "pointer",
-            transition: "background 200ms ease, border-color 200ms ease",
-            flexShrink: 0,
-          }}
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            aria-hidden
+            Generate Notes
+          </button>
+
+          {/* Upload PDF mode button */}
+          <button
+            type="button"
+            onClick={() => setActiveMode("upload")}
             style={{
-              animation: isSyncing
-                ? "notes-sync-spin 0.7s linear infinite"
-                : "none",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "13px",
+              fontWeight: 500,
+              padding: "8px 16px",
+              borderRadius: "6px",
+              border: "none",
+              cursor: "pointer",
+              transition: "background 200ms ease, color 200ms ease",
+              background:
+                activeMode === "upload" ? "var(--gold)" : "transparent",
+              color:
+                activeMode === "upload" ? "var(--bg)" : "var(--text-muted)",
             }}
           >
-            <polyline points="23 4 23 10 17 10" />
-            <polyline points="1 20 1 14 7 14" />
-            <path d="M3.5 10c.84-2.5 2.87-4.52 5.5-5.32C13.56 3.19 18.21 4.65 20.5 7.4" />
-            <path d="M20.5 14c-.84 2.5-2.87 4.52-5.5 5.32C10.44 20.81 5.79 19.35 3.5 16.6" />
-          </svg>
-          <span className="notes-sync-label">
-            {isSyncing ? "Syncing..." : "Sync Now"}
-          </span>
-        </button>
+            Upload PDF
+          </button>
+        </div>
       </header>
+
+      {/* Action panel — shown below the header, switches based on activeMode */}
+      <div
+        style={{
+          margin: "20px var(--page-padding) 0",
+          background: "var(--card)",
+          border: "0.5px solid var(--gold-border)",
+          borderRadius: "12px",
+          padding: "20px",
+        }}
+      >
+        {/* GENERATE NOTES PANEL */}
+        {activeMode === "generate" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            {/* Panel title */}
+            <p
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "13px",
+                color: "var(--text-muted)",
+                margin: 0,
+              }}
+            >
+              Pick a subject and topic — your AI tutor will generate clear notes
+              instantly.
+            </p>
+
+            {/* Subject and topic dropdowns side by side on desktop, stacked on mobile */}
+            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+              {/* Subject dropdown */}
+              <select
+                value={genSubjectId}
+                onChange={(e) => handleSubjectChange(e.target.value)}
+                style={{
+                  flex: "1",
+                  minWidth: "160px",
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "13px",
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  border: "0.5px solid var(--gold-border)",
+                  background: "var(--bg)",
+                  color: genSubjectId ? "var(--text)" : "var(--text-muted)",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="">Select subject...</option>
+                {/* Render one option per subject from the database */}
+                {subjectIndex.ordered.map((subj) => (
+                  <option key={subj.id} value={subj.id}>
+                    {subj.name}
+                  </option>
+                ))}
+              </select>
+
+              {/* Topic dropdown — only shows topics for the selected subject */}
+              <select
+                value={genTopicName}
+                onChange={(e) => setGenTopicName(e.target.value)}
+                disabled={syllabusTopics.length === 0}
+                style={{
+                  flex: "2",
+                  minWidth: "200px",
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "13px",
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  border: "0.5px solid var(--gold-border)",
+                  background: "var(--bg)",
+                  color: genTopicName ? "var(--text)" : "var(--text-muted)",
+                  cursor:
+                    syllabusTopics.length === 0 ? "not-allowed" : "pointer",
+                  opacity: syllabusTopics.length === 0 ? 0.5 : 1,
+                }}
+              >
+                <option value="">
+                  {syllabusTopics.length === 0
+                    ? genSubjectId
+                      ? "No topics found — upload syllabus first"
+                      : "Select subject first..."
+                    : "Select topic..."}
+                </option>
+                {/* Render one option per syllabus topic */}
+                {syllabusTopics.map((t) => (
+                  <option key={t.id} value={t.topic_name}>
+                    {t.topic_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Generate button */}
+            <button
+              type="button"
+              onClick={handleGenerateNote}
+              disabled={isGenerating || !genSubjectId || !genTopicName}
+              style={{
+                alignSelf: "flex-start",
+                fontFamily: "Inter, sans-serif",
+                fontSize: "13px",
+                fontWeight: 500,
+                padding: "10px 24px",
+                borderRadius: "8px",
+                border: "none",
+                cursor:
+                  isGenerating || !genSubjectId || !genTopicName
+                    ? "not-allowed"
+                    : "pointer",
+                background:
+                  isGenerating || !genSubjectId || !genTopicName
+                    ? "var(--card-hover)"
+                    : "var(--gold)",
+                color:
+                  isGenerating || !genSubjectId || !genTopicName
+                    ? "var(--text-muted)"
+                    : "var(--bg)",
+                transition: "background 200ms ease",
+              }}
+            >
+              {isGenerating ? "Generating..." : "Generate Note"}
+            </button>
+          </div>
+        )}
+
+        {/* UPLOAD PDF PANEL */}
+        {activeMode === "upload" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            {/* Panel description */}
+            <p
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "13px",
+                color: "var(--text-muted)",
+                margin: 0,
+              }}
+            >
+              Upload your notes, textbook chapter, or handout — AI will break it
+              into topics and save them all.
+            </p>
+
+            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+              {/* Subject dropdown for PDF upload */}
+              <select
+                value={uploadSubjectId}
+                onChange={(e) => setUploadSubjectId(e.target.value)}
+                style={{
+                  flex: "1",
+                  minWidth: "160px",
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "13px",
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  border: "0.5px solid var(--gold-border)",
+                  background: "var(--bg)",
+                  color: uploadSubjectId ? "var(--text)" : "var(--text-muted)",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="">Select subject...</option>
+                {subjectIndex.ordered.map((subj) => (
+                  <option key={subj.id} value={subj.id}>
+                    {subj.name}
+                  </option>
+                ))}
+              </select>
+
+              {/* File picker for PDF */}
+              <label
+                style={{
+                  flex: "2",
+                  minWidth: "200px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  border: "0.5px solid var(--gold-border)",
+                  background: "var(--bg)",
+                  cursor: "pointer",
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "13px",
+                  color: uploadFile ? "var(--text)" : "var(--text-muted)",
+                }}
+              >
+                {/* Hidden actual file input */}
+                <input
+                  type="file"
+                  accept=".pdf"
+                  style={{ display: "none" }}
+                  onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                />
+                {/* Show file name if selected, otherwise placeholder */}
+                {uploadFile ? uploadFile.name : "Choose PDF file..."}
+              </label>
+            </div>
+
+            {/* Upload and Generate button */}
+            <button
+              type="button"
+              onClick={handleUploadPDF}
+              disabled={isUploading || !uploadSubjectId || !uploadFile}
+              style={{
+                alignSelf: "flex-start",
+                fontFamily: "Inter, sans-serif",
+                fontSize: "13px",
+                fontWeight: 500,
+                padding: "10px 24px",
+                borderRadius: "8px",
+                border: "none",
+                cursor:
+                  isUploading || !uploadSubjectId || !uploadFile
+                    ? "not-allowed"
+                    : "pointer",
+                background:
+                  isUploading || !uploadSubjectId || !uploadFile
+                    ? "var(--card-hover)"
+                    : "var(--gold)",
+                color:
+                  isUploading || !uploadSubjectId || !uploadFile
+                    ? "var(--text-muted)"
+                    : "var(--bg)",
+                transition: "background 200ms ease",
+              }}
+            >
+              {isUploading ? "Processing PDF..." : "Upload and Generate"}
+            </button>
+          </div>
+        )}
+      </div>
 
       <nav
         aria-label="Notes filters"
