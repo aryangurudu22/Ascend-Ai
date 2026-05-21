@@ -955,7 +955,7 @@ export default function ProfilePage() {
             );
           })}
         </div>
-        <CardLink onClick={() => router.push("/onboarding/exam-dates?from=edit")}>
+        <CardLink onClick={() => router.push("/profile/exam-dates?from=edit")}>
           Update Exam Dates →
         </CardLink>
       </section>

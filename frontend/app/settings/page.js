@@ -612,7 +612,7 @@ export default function SettingsPage() {
         >
           <button
             type="button"
-            onClick={() => router.push("/onboarding/exam-dates")}
+            onClick={() => router.push("/profile/exam-dates")}
             style={{
               background: "none",
               border: "none",
