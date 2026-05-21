@@ -351,29 +351,6 @@ function subjectLabelFromKey(subjectKey) {
   return match?.name || subjectKey;
 }
 
-/** GET /analytics/exam-intelligence — returns [] on failure for fallback UI */
-async function fetchExamIntelligence(session) {
-  if (!session || !session.access_token) {
-    console.log("[Dashboard] No session — skipping exam intelligence");
-    return [];
-  }
-  try {
-    const res = await fetch(`${API_URL}/analytics/exam-intelligence`, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      console.warn("[Dashboard] exam-intelligence HTTP", res.status);
-      return [];
-    }
-    return Array.isArray(data?.subjects) ? data.subjects : [];
-  } catch (err) {
-    console.warn("[Dashboard] exam-intelligence fetch failed:", err);
-    return [];
-  }
-}
-
 /** Time-of-day word for the greeting (5amâ€“12 / 12â€“5 / 5â€“10 / 10â€“5) */
 function getTimeOfDay() {
   const h = new Date().getHours();
@@ -456,61 +433,35 @@ function stripMarkdown(text) {
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // HELPER: fetchDashboardData
-// Uses the same endpoints as feature pages (no new backend routes)
+// One GET /analytics/dashboard-summary replaces four separate calls.
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function fetchDashboardData(userId, token, weekStart, weekEnd) {
-  const entriesUrl =
-    `${API_URL}/timetable/entries` +
+  // Build the combined dashboard URL with week bounds + caller id.
+  const summaryUrl =
+    `${API_URL}/analytics/dashboard-summary` +
     `?user_id=${encodeURIComponent(userId)}` +
     `&week_start=${encodeURIComponent(weekStart)}` +
     `&week_end=${encodeURIComponent(weekEnd)}`;
 
-  const notesParams = new URLSearchParams({
-    user_id: userId,
-    limit: "3",
-    offset: "0",
-  });
+  // Single fetch — replaces timetable, notes, homework count, and exam intel.
+  const summaryBody = await fetch(summaryUrl, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  })
+    .then(async (res) => {
+      const data = res.ok ? await res.json().catch(() => null) : null;
+      console.log("[Dashboard] dashboard-summary status:", res.status);
+      console.log("[Dashboard] dashboard-summary:", data);
+      return data;
+    })
+    .catch((err) => {
+      console.warn("[Dashboard] dashboard-summary fetch failed:", err);
+      return null;
+    });
 
-  const [entriesBody, notesBody, homeworkBody] = await Promise.all([
-    fetch(entriesUrl, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(async (res) => {
-        const data = res.ok ? await res.json().catch(() => null) : null;
-        console.log("[Dashboard Timetable] response status:", res.status);
-        console.log("[Dashboard Timetable] entries:", data);
-        return data;
-      })
-      .catch(() => null),
-    fetch(`${API_URL}/notes/list?${notesParams.toString()}`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    })
-      .then(async (r) => {
-        if (!r.ok) {
-          console.warn("[Dashboard] notes/list HTTP", r.status);
-          return null;
-        }
-        return r.json().catch(() => null);
-      })
-      .catch((err) => {
-        console.warn("[Dashboard] notes/list fetch failed:", err);
-        return null;
-      }),
-    fetch(`${API_URL}/homework/history`, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(async (r) => (r.ok ? r.json().catch(() => null) : null))
-      .catch(() => null),
-  ]);
-
-  const rawEntries = Array.isArray(entriesBody?.data)
-    ? entriesBody.data
+  // Timetable rows — same nested path as GET /timetable/entries.
+  const rawEntries = Array.isArray(summaryBody?.timetable_entries?.data)
+    ? summaryBody.timetable_entries.data
     : [];
   const entries = rawEntries
     .map(normalizeEntry)
@@ -521,20 +472,39 @@ async function fetchDashboardData(userId, token, weekStart, weekEnd) {
         (a.start_time || "").localeCompare(b.start_time || ""),
     );
 
-  const notes = Array.isArray(notesBody?.data) ? notesBody.data : [];
+  // Latest notes — same nested path as GET /notes/list?limit=3.
+  const notes = Array.isArray(summaryBody?.notes?.data)
+    ? summaryBody.notes.data
+    : [];
   console.log("[Dashboard] Notes fetched:", notes);
   console.log("[Dashboard] Notes count:", notes?.length);
 
-  const homeworkRows = Array.isArray(homeworkBody?.data)
-    ? homeworkBody.data
-    : Array.isArray(homeworkBody)
-      ? homeworkBody
-      : [];
+  // Homework count scalar — legacy homeworkRows array stays empty for shape parity.
+  const questionsAskedFromSummary =
+    typeof summaryBody?.questions_asked === "number"
+      ? summaryBody.questions_asked
+      : 0;
+  const homeworkRows = [];
 
-  return { entries, notes, homeworkRows, weekStart, weekEnd };
+  // Exam intelligence — subjects array from the combined payload.
+  const examIntelligence = Array.isArray(
+    summaryBody?.exam_intelligence?.subjects,
+  )
+    ? summaryBody.exam_intelligence.subjects
+    : [];
+
+  return {
+    entries,
+    notes,
+    homeworkRows,
+    weekStart,
+    weekEnd,
+    examIntelligence,
+    questionsAsked: questionsAskedFromSummary,
+  };
 }
 
-/** Critical path — timetable entries for the current week only */
+/** Timetable-only fetch — used when the user navigates to another week. */
 async function fetchTimetableEntries(userId, token, weekStart, weekEnd) {
   const entriesUrl =
     `${API_URL}/timetable/entries` +
@@ -567,42 +537,6 @@ async function fetchTimetableEntries(userId, token, weekStart, weekEnd) {
     );
 
   return { entries, weekStart, weekEnd };
-}
-
-/** Critical path — latest three notes for the dashboard cards */
-async function fetchLatestNotes(userId, token) {
-  const notesParams = new URLSearchParams({
-    user_id: userId,
-    limit: "3",
-    offset: "0",
-  });
-
-  const notesBody = await fetch(
-    `${API_URL}/notes/list?${notesParams.toString()}`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    },
-  )
-    .then(async (r) => {
-      if (!r.ok) {
-        console.warn("[Dashboard] notes/list HTTP", r.status);
-        return null;
-      }
-      return r.json().catch(() => null);
-    })
-    .catch((err) => {
-      console.warn("[Dashboard] notes/list fetch failed:", err);
-      return null;
-    });
-
-  const notes = Array.isArray(notesBody?.data) ? notesBody.data : [];
-  console.log("[Dashboard] Notes fetched:", notes);
-  console.log("[Dashboard] Notes count:", notes?.length);
-  return notes;
 }
 
 /** Secondary — homework history for stats (deferred after first paint) */
@@ -796,60 +730,51 @@ export default function DashboardPage() {
 
       const token = session.access_token;
 
-      // STEP 1 — critical data in parallel, then show dashboard immediately
+      // STEP 1 — one dashboard-summary call, then show dashboard immediately
       if (token && authUser.id) {
         const { weekStart, weekEnd } = getWeekDates();
 
-        const [timetableData, notesData] = await Promise.all([
-          fetchTimetableEntries(authUser.id, token, weekStart, weekEnd),
-          fetchLatestNotes(authUser.id, token),
-        ]);
+        const dashboardData = await fetchDashboardData(
+          authUser.id,
+          token,
+          weekStart,
+          weekEnd,
+        );
 
-        setWeekEntries(timetableData.entries);
-        setLatestNotes(notesData);
+        setWeekEntries(dashboardData.entries);
+        setLatestNotes(dashboardData.notes);
         setWeekBounds({
-          start: timetableData.weekStart,
-          end: timetableData.weekEnd,
+          start: dashboardData.weekStart,
+          end: dashboardData.weekEnd,
         });
 
         const initialChecked = {};
-        for (const e of timetableData.entries) {
+        for (const e of dashboardData.entries) {
           if (e.is_completed) initialChecked[e.id] = true;
         }
         setCheckedSessions(initialChecked);
+
+        const intelRows = dashboardData.examIntelligence || [];
+        setExamIntelligence(intelRows);
+        if (intelRows.length > 0) {
+          setExamDates((prev) => {
+            const merged = { ...prev };
+            for (const row of intelRows) {
+              if (row.exam_date) merged[row.subject] = row.exam_date;
+            }
+            return merged;
+          });
+        }
+
+        setQuestionsAsked(dashboardData.questionsAsked ?? 0);
+        setHomeworkRows(dashboardData.homeworkRows);
       }
 
       setLoading(false);
 
-      // STEP 2 — secondary fetches after dashboard is visible (non-blocking)
+      // STEP 2 — profile safety-net only (exam intel + counts come from STEP 1)
       secondaryTimerId = setTimeout(async () => {
         ensureProfileExists(authUser);
-
-        if (!token || !authUser.id) return;
-
-        try {
-          const [intelRows, hw, questionsTotal] = await Promise.all([
-            fetchExamIntelligence(session),
-            fetchHomeworkHistory(token),
-            fetchQuestionsAskedCount(authUser.id),
-          ]);
-
-          setExamIntelligence(intelRows);
-          if (intelRows.length > 0) {
-            setExamDates((prev) => {
-              const merged = { ...prev };
-              for (const row of intelRows) {
-                if (row.exam_date) merged[row.subject] = row.exam_date;
-              }
-              return merged;
-            });
-          }
-
-          setHomeworkRows(hw);
-          setQuestionsAsked(questionsTotal);
-        } catch (err) {
-          console.warn("[Dashboard] Secondary data load failed:", err);
-        }
       }, 100);
     };
 

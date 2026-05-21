@@ -7,6 +7,7 @@
 #   GET /analytics/summary?period=week|month|all
 #   GET /analytics/subject-breakdown?period=week|month|all
 #   GET /analytics/activity-feed
+#   GET /analytics/dashboard-summary?user_id&week_start&week_end
 # ============================================================
 
 from datetime import date, datetime, timedelta, timezone
@@ -111,6 +112,58 @@ class ExamIntelligenceResponse(BaseModel):
     """GET /analytics/exam-intelligence response envelope."""
 
     subjects: List[ExamIntelligenceSubject]
+
+
+class DashboardTimetableEntryItem(BaseModel):
+    """One timetable row — same shape as GET /timetable/entries items."""
+
+    id: str
+    subject_id: Optional[str] = None
+    subject_name: Optional[str] = None
+    subject_code: Optional[str] = None
+    title: str = ""
+    notes: Optional[str] = ""
+    date: str = ""
+    start_time: str = ""
+    end_time: str = ""
+    is_completed: bool = False
+
+
+class DashboardTimetableBlock(BaseModel):
+    """Timetable block — mirrors TimetableEntriesResponse."""
+
+    data: List[DashboardTimetableEntryItem]
+    total: int
+
+
+class DashboardNoteListItem(BaseModel):
+    """One note row — same shape as GET /notes/list items."""
+
+    id: str
+    user_id: str
+    subject_id: str
+    subject_name: str
+    subject_code: str
+    title: str
+    summary: str
+    key_points: List[str]
+    created_at: str
+
+
+class DashboardNotesBlock(BaseModel):
+    """Notes block — mirrors NotesListResponse (data + total)."""
+
+    data: List[DashboardNoteListItem]
+    total: int
+
+
+class DashboardSummaryResponse(BaseModel):
+    """GET /analytics/dashboard-summary combined dashboard payload."""
+
+    timetable_entries: DashboardTimetableBlock
+    notes: DashboardNotesBlock
+    questions_asked: int
+    exam_intelligence: ExamIntelligenceResponse
 
 
 def verify_bearer_token(
@@ -1007,22 +1060,218 @@ def _smart_message(
     )
 
 
-@router.get(
-    "/exam-intelligence",
-    response_model=ExamIntelligenceResponse,
-    summary="Smart exam countdown with syllabus coverage urgency",
-)
-def analytics_exam_intelligence(
-    verified_user_id: str = Depends(verify_bearer_token),
-):
+def _assert_caller_user_id(verified_user_id: str, user_id: str) -> None:
+    """Reject mismatched user_id query params (anti-spoof, same as timetable)."""
+
+    if user_id.strip() != verified_user_id.strip():
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "Unauthorised — please log in"},
+        )
+
+
+def _validate_week_date_range(week_start: str, week_end: str) -> None:
+    """Ensure week_start/week_end are valid ISO dates (YYYY-MM-DD)."""
+
+    try:
+        date.fromisoformat(week_start)
+        date.fromisoformat(week_end)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "week_start and week_end must be ISO dates (YYYY-MM-DD).",
+            },
+        )
+
+
+def _normalise_note_subject_join(
+    joined: Any,
+) -> Tuple[str, str]:
     """
-    Combine exam dates, syllabus coverage, and timetable context into
-    per-subject urgency metrics for the dashboard countdown card.
+    Resolve subject name + code from a PostgREST subjects embed.
+
+    Mirrors routers/notes.py _normalise_subject_fields for list output.
     """
 
-    # Step 1 — exam dates JSON (user_profiles / profiles / subjects).
+    if not joined:
+        return "", ""
+
+    if isinstance(joined, list):
+        joined = joined[0] if joined else None
+
+    if not isinstance(joined, dict):
+        return "", ""
+
+    return (
+        str(joined.get("name") or ""),
+        str(joined.get("code") or ""),
+    )
+
+
+def _fetch_timetable_entries_for_week(
+    user_id: str,
+    week_start: str,
+    week_end: str,
+) -> DashboardTimetableBlock:
+    """
+    Load timetable rows for one inclusive Mon–Sun window.
+
+    Same query + field mapping as GET /timetable/entries in timetable.py.
+    """
+
+    try:
+        result = (
+            supabase.table(TIMETABLE_TABLE)
+            .select(
+                "id, subject_id, topic, scheduled_date, start_time, "
+                "end_time, completed, subjects(name, code)"
+            )
+            .eq("user_id", user_id)
+            .gte("scheduled_date", week_start)
+            .lte("scheduled_date", week_end)
+            .order("scheduled_date", desc=False)
+            .order("start_time", desc=False)
+            .execute()
+        )
+        rows = getattr(result, "data", None) or []
+    except Exception as e:
+        print(
+            f"[Analytics] dashboard timetable read failed: "
+            f"{type(e).__name__}: {e}"
+        )
+        rows = []
+
+    items: List[DashboardTimetableEntryItem] = []
+    for row in rows:
+        subj = row.get("subjects")
+        if isinstance(subj, list):
+            subj = subj[0] if subj else None
+        items.append(
+            DashboardTimetableEntryItem(
+                id=str(row.get("id", "")),
+                subject_id=(
+                    str(row["subject_id"]) if row.get("subject_id") else None
+                ),
+                subject_name=(
+                    subj.get("name") if isinstance(subj, dict) else None
+                ),
+                subject_code=(
+                    subj.get("code") if isinstance(subj, dict) else None
+                ),
+                title=row.get("topic") or "",
+                notes="",
+                date=str(row.get("scheduled_date") or ""),
+                start_time=str(row.get("start_time") or ""),
+                end_time=str(row.get("end_time") or ""),
+                is_completed=bool(row.get("completed", False)),
+            )
+        )
+
+    return DashboardTimetableBlock(data=items, total=len(items))
+
+
+def _fetch_notes_list(
+    user_id: str,
+    limit: int = 3,
+    offset: int = 0,
+) -> DashboardNotesBlock:
+    """
+    Load study notes for the dashboard (newest first).
+
+    Same query + mapping as GET /notes/list with limit/offset.
+    """
+
+    try:
+        count_result = (
+            supabase.table(NOTES_TABLE)
+            .select("id", count="exact")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        total = int(getattr(count_result, "count", None) or 0)
+    except Exception as e:
+        print(
+            f"[Analytics] dashboard notes count failed: "
+            f"{type(e).__name__}: {e}"
+        )
+        total = 0
+
+    try:
+        list_result = (
+            supabase.table(NOTES_TABLE)
+            .select(
+                "id, user_id, subject_id, title, summary, key_points, "
+                "created_at, subjects(name, code)"
+            )
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+        rows = getattr(list_result, "data", None) or []
+    except Exception as e:
+        print(
+            f"[Analytics] dashboard notes list failed: "
+            f"{type(e).__name__}: {e}"
+        )
+        rows = []
+
+    items: List[DashboardNoteListItem] = []
+    for row in rows:
+        subj_name, subj_code = _normalise_note_subject_join(row.get("subjects"))
+        kp = row.get("key_points")
+        if not isinstance(kp, list):
+            kp = []
+        items.append(
+            DashboardNoteListItem(
+                id=str(row.get("id", "")),
+                user_id=str(row.get("user_id", "")),
+                subject_id=str(row.get("subject_id", "")),
+                subject_name=subj_name,
+                subject_code=subj_code,
+                title=str(row.get("title") or ""),
+                summary=str(row.get("summary") or ""),
+                key_points=[str(p) for p in kp if str(p or "").strip()],
+                created_at=str(row.get("created_at") or ""),
+            )
+        )
+
+    return DashboardNotesBlock(data=items, total=total)
+
+
+def _questions_asked_all_time(user_id: str) -> int:
+    """
+    Total questions asked (homework + essay checks), no date filter.
+
+    Reuses _count_rows — same components as GET /analytics/summary period=all.
+    """
+
+    homework_count = _count_rows(
+        HOMEWORK_TABLE,
+        user_id,
+        "created_at",
+        None,
+    )
+    essay_count = _count_rows(
+        ESSAY_CHECKS_TABLE,
+        user_id,
+        "created_at",
+        None,
+    )
+    return homework_count + essay_count
+
+
+def _build_exam_intelligence_subjects(
+    verified_user_id: str,
+) -> List[ExamIntelligenceSubject]:
+    """
+    Build per-subject exam intelligence rows.
+
+    Shared by GET /analytics/exam-intelligence and dashboard-summary.
+    """
+
     exam_dates_map = _load_exam_dates_for_user(verified_user_id)
-
     subjects_out: List[ExamIntelligenceSubject] = []
 
     for subject_key in SUBJECT_KEYS:
@@ -1030,7 +1279,6 @@ def analytics_exam_intelligence(
         if not exam_date_str:
             continue
 
-        # Step 2 — coverage totals for this subject.
         total_topics, covered = _coverage_counts(verified_user_id, subject_key)
         topics_remaining = max(0, total_topics - covered)
 
@@ -1039,7 +1287,6 @@ def analytics_exam_intelligence(
         else:
             coverage_percentage = 0.0
 
-        # Step 3 — derived urgency metrics.
         days_remaining = _days_until_exam(exam_date_str)
         urgency = _urgency_level(days_remaining, coverage_percentage)
         daily_pace = _daily_topics_needed(topics_remaining, days_remaining)
@@ -1050,7 +1297,6 @@ def analytics_exam_intelligence(
             daily_pace,
         )
 
-        # Timetable sessions reserved for future weighting (spec parity).
         _count_upcoming_timetable_sessions(verified_user_id, subject_key)
 
         subjects_out.append(
@@ -1067,7 +1313,6 @@ def analytics_exam_intelligence(
             )
         )
 
-        # Critical urgency — one exam alert notification per subject per day.
         if urgency == "critical":
             subject_label = SUBJECT_KEY_TO_LABEL.get(
                 subject_key, subject_key.replace("_", " ").title()
@@ -1083,7 +1328,74 @@ def analytics_exam_intelligence(
                     ),
                 )
 
-    # Soonest exams first so the dashboard highlights the nearest deadline.
     subjects_out.sort(key=lambda s: s.days_remaining)
+    return subjects_out
 
+
+@router.get(
+    "/exam-intelligence",
+    response_model=ExamIntelligenceResponse,
+    summary="Smart exam countdown with syllabus coverage urgency",
+)
+def analytics_exam_intelligence(
+    verified_user_id: str = Depends(verify_bearer_token),
+):
+    """
+    Combine exam dates, syllabus coverage, and timetable context into
+    per-subject urgency metrics for the dashboard countdown card.
+    """
+
+    subjects_out = _build_exam_intelligence_subjects(verified_user_id)
     return ExamIntelligenceResponse(subjects=subjects_out)
+
+
+@router.get(
+    "/dashboard-summary",
+    response_model=DashboardSummaryResponse,
+    summary="Combined dashboard payload (timetable, notes, counts, exams)",
+)
+def analytics_dashboard_summary(
+    user_id: str = Query(
+        ...,
+        min_length=1,
+        description="Caller's UUID (must match bearer token).",
+    ),
+    week_start: str = Query(
+        ...,
+        min_length=10,
+        max_length=10,
+        description="ISO date of the week's Monday (YYYY-MM-DD).",
+    ),
+    week_end: str = Query(
+        ...,
+        min_length=10,
+        max_length=10,
+        description="ISO date of the week's Sunday (YYYY-MM-DD).",
+    ),
+    verified_user_id: str = Depends(verify_bearer_token),
+):
+    """
+    Single round-trip for the home dashboard.
+
+    Bundles timetable entries (current week), latest three notes,
+    all-time questions asked, and exam intelligence.
+    """
+
+    _assert_caller_user_id(verified_user_id, user_id)
+    _validate_week_date_range(week_start, week_end)
+
+    timetable_block = _fetch_timetable_entries_for_week(
+        verified_user_id,
+        week_start,
+        week_end,
+    )
+    notes_block = _fetch_notes_list(verified_user_id, limit=3, offset=0)
+    questions_asked = _questions_asked_all_time(verified_user_id)
+    exam_subjects = _build_exam_intelligence_subjects(verified_user_id)
+
+    return DashboardSummaryResponse(
+        timetable_entries=timetable_block,
+        notes=notes_block,
+        questions_asked=questions_asked,
+        exam_intelligence=ExamIntelligenceResponse(subjects=exam_subjects),
+    )
