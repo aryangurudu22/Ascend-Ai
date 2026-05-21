@@ -9,7 +9,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 
 // Key used to remember when the user dismissed the banner
@@ -20,22 +19,8 @@ export default function PWAInstallBanner() {
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   // showBanner controls whether the install prompt is visible
   const [showBanner, setShowBanner] = useState(false);
-  // isStandalone is true when the app is running as an installed PWA
-  const [isStandalone, setIsStandalone] = useState(false);
-  // pathname lets us hide the refresh button on pages where it would overlap
-  const pathname = usePathname();
 
   useEffect(() => {
-    // Check if the app is running as an installed PWA in standalone mode
-    // This is how we know the browser chrome (and its refresh button) is hidden
-    const standalone =
-      window.matchMedia("(display-mode: standalone)").matches ||
-      window.navigator.standalone === true;
-    setIsStandalone(standalone);
-
-    // If already running as PWA, no need to show the install banner
-    if (standalone) return;
-
     // Check if user dismissed the banner within the last 7 days
     const dismissed = localStorage.getItem(DISMISS_KEY);
     if (dismissed) {
@@ -84,45 +69,8 @@ export default function PWAInstallBanner() {
     setShowBanner(false);
   };
 
-  // handleRefresh — called when user clicks the refresh button in PWA mode
-  const handleRefresh = () => {
-    // Force a full page reload to get the latest content
-    window.location.reload();
-  };
-
   return (
     <>
-      {/* REFRESH BUTTON — only shown when running as installed PWA */}
-      {/* Fixes Bug 5: no refresh button in PWA standalone mode */}
-      {isStandalone && pathname !== "/login" && (
-        <button
-          type="button"
-          onClick={handleRefresh}
-          aria-label="Refresh page"
-          style={{
-            // Fixed to top-right corner so it's always accessible
-            position: "fixed",
-            top: "16px",
-            right: "16px",
-            zIndex: 999,
-            width: "36px",
-            height: "36px",
-            borderRadius: "50%",
-            background: "var(--card)",
-            border: "0.5px solid var(--gold-border)",
-            color: "var(--text-muted)",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: "16px",
-          }}
-        >
-          {/* Refresh icon using unicode rotate symbol */}
-          ↺
-        </button>
-      )}
-
       {/* INSTALL BANNER — shown when app is installable and not dismissed */}
       {/* Fixes Bug 4: stacks vertically on small screens */}
       <AnimatePresence>
