@@ -9,6 +9,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 
 // Key used to remember when the user dismissed the banner
@@ -21,6 +22,8 @@ export default function PWAInstallBanner() {
   const [showBanner, setShowBanner] = useState(false);
   // isStandalone is true when the app is running as an installed PWA
   const [isStandalone, setIsStandalone] = useState(false);
+  // pathname lets us hide the refresh button on pages where it would overlap
+  const pathname = usePathname();
 
   useEffect(() => {
     // Check if the app is running as an installed PWA in standalone mode
@@ -91,7 +94,7 @@ export default function PWAInstallBanner() {
     <>
       {/* REFRESH BUTTON — only shown when running as installed PWA */}
       {/* Fixes Bug 5: no refresh button in PWA standalone mode */}
-      {isStandalone && (
+      {isStandalone && pathname !== "/login" && (
         <button
           type="button"
           onClick={handleRefresh}
