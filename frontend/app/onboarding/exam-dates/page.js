@@ -6,7 +6,8 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { useRouter } from "next/navigation";
 import { SUBJECTS } from "../../../lib/subjects";
 import { supabase } from "../../../lib/supabaseClient";
@@ -27,10 +28,14 @@ const buildInitialDates = () =>
     return acc;
   }, {});
 
-export default function OnboardingExamDates() {
+function OnboardingExamDatesContent() {
   const router = useRouter();
   const [examDates, setExamDates] = useState(buildInitialDates);
   const [isSaving, setIsSaving] = useState(false);
+  // searchParams lets us check if user came from edit mode or onboarding
+  const searchParams = useSearchParams();
+  // saved controls the success message shown after saving in edit mode
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem(ONBOARDING_DATA_KEY);
@@ -108,7 +113,17 @@ export default function OnboardingExamDates() {
     }
 
     console.log("[ExamDates] Proceeding to study-hours");
-    router.push("/onboarding/study-hours");
+    // Check if user came from edit mode — if yes stay on page, if no continue onboarding
+    const fromEdit = searchParams.get("from") === "edit";
+    if (fromEdit) {
+      // Show a success message instead of redirecting
+      setSaved(true);
+      // Hide the success message after 3 seconds
+      setTimeout(() => setSaved(false), 3000);
+    } else {
+      // Normal onboarding flow — go to next step
+      router.push("/onboarding/study-hours");
+    }
   };
 
   return (
@@ -167,9 +182,31 @@ export default function OnboardingExamDates() {
         ))}
       </div>
 
+      {/* Success message shown after saving in edit mode */}
+      {saved && (
+        <p style={{
+          fontFamily: "Inter, sans-serif",
+          fontSize: "13px",
+          color: "var(--gold)",
+          textAlign: "center",
+          margin: "0 0 12px 0",
+        }}>
+          Exam dates saved successfully
+        </p>
+      )}
+
       <ContinueButton onClick={handleNext} loading={isSaving} disabled={isSaving}>
         Save Exam Dates →
       </ContinueButton>
     </OnboardingShell>
+  );
+}
+
+// Next.js requires useSearchParams inside a Suspense boundary at build time.
+export default function OnboardingExamDates() {
+  return (
+    <Suspense fallback={null}>
+      <OnboardingExamDatesContent />
+    </Suspense>
   );
 }
