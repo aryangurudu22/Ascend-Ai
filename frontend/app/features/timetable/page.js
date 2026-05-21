@@ -86,6 +86,17 @@ const API_URL =
 // Auto-dismiss the bottom-right toast after this many ms.
 const TOAST_DISMISS_MS = 4000;
 
+// Cycling copy shown every 4s while POST /timetable/generate runs.
+const GENERATE_PROGRESS_MESSAGES = [
+  "Checking your exam dates...",
+  "Analysing your study window...",
+  "Calculating subject urgency...",
+  "Building your 2-week plan...",
+  "Scheduling sessions by priority...",
+  "Balancing workload across 14 days...",
+  "Almost there — finalising your timetable...",
+];
+
 // Long-press threshold for the context menu on touch devices.
 const LONG_PRESS_MS = 500;
 
@@ -1724,6 +1735,8 @@ export default function TimetablePage() {
   const [contextMenu, setContextMenu] = useState(null);
   // isGenerating tracks the Generate Now button spinner.
   const [isGenerating, setIsGenerating] = useState(false);
+  // progressMsg shows a cycling message while timetable generation is in progress
+  const [progressMsg, setProgressMsg] = useState("");
   // generateStatus drives the inline panel below Generate Now:
   // null | 'loading' | 'success' | 'error'
   const [generateStatus, setGenerateStatus] = useState(null);
@@ -2054,8 +2067,17 @@ export default function TimetablePage() {
       return;
     }
 
+    // Start showing cycling progress messages every 4 seconds
     setGenerateStatus("loading");
     setIsGenerating(true);
+    // Show the first message immediately
+    setProgressMsg(GENERATE_PROGRESS_MESSAGES[0]);
+    // Cycle through the messages every 4 seconds while waiting
+    let msgIndex = 0;
+    const progressInterval = setInterval(() => {
+      msgIndex = (msgIndex + 1) % GENERATE_PROGRESS_MESSAGES.length;
+      setProgressMsg(GENERATE_PROGRESS_MESSAGES[msgIndex]);
+    }, 4000);
     // Snapshot the flag so a state flip mid-flight can't change
     // what we sent on the wire. We also clear `pendingRegenerate`
     // optimistically so a second rapid click doesn't double-fire.
@@ -2121,7 +2143,10 @@ export default function TimetablePage() {
       setGenerateStatus("error");
       setGenerateMsg("Could not generate timetable — please try again");
     } finally {
+      // Always clear the progress interval when generation finishes or fails
+      clearInterval(progressInterval);
       setIsGenerating(false);
+      setProgressMsg("");
     }
   };
 
@@ -2726,6 +2751,10 @@ export default function TimetablePage() {
                   Building your personalised 2-week plan...
                   <br />
                   This takes about 30 seconds ✦
+                  {/* Cycling status line — updates every 4s during generation */}
+                  <p style={{ fontFamily: "Inter, sans-serif", fontSize: "13px", color: "var(--text-muted)", margin: "8px 0 0", textAlign: "center" }}>
+                    {progressMsg}
+                  </p>
                 </>
               ) : (
                 generateMsg
