@@ -28,7 +28,6 @@ import {
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // localStorage keys â€” onboarding completion flag + saved exam dates
-const ONBOARDING_KEY = "ascendai_onboarding_completed";
 const ONBOARDING_DATA_KEY = "ascendai_onboarding_data";
 
 // Backend base URL for profile safety-net and dashboard data fetches
@@ -775,11 +774,6 @@ export default function DashboardPage() {
       }
 
       setUser(authUser);
-
-      if (localStorage.getItem(ONBOARDING_KEY) !== "true") {
-        router.replace("/onboarding/welcome");
-        return;
-      }
 
       let mergedExams = { ...FALLBACK_EXAM_DATES };
       try {

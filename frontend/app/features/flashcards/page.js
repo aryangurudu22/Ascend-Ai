@@ -61,10 +61,6 @@ import { staggerContainer, staggerItem } from "../../lib/animations";
 // re-type them. Nothing here is real data — that comes from DB.
 // ─────────────────────────────────────────────────────────────
 
-// localStorage flag the onboarding sets to "true" on completion.
-// Same key the dashboard + notes pages read — defined once.
-const ONBOARDING_KEY = "ascendai_onboarding_completed";
-
 // FastAPI base URL — pulled from .env.local, with a sane default
 // so the page still works during local dev if the var is missing.
 // Same fallback the homework + notes pages use.
@@ -1113,9 +1109,8 @@ export default function FlashcardsPage() {
   // ───────────────────────────────────────────────────────────
   // EFFECT 1 — Auth + onboarding guard.
   // ───────────────────────────────────────────────────────────
-  // Runs once on mount. Mirrors the dashboard pattern exactly:
-  // missing session → /login, missing onboarding flag →
-  // /onboarding/welcome. Otherwise marks the page ready.
+  // Runs once on mount: missing session → /login.
+  // Onboarding redirect is handled by auth/callback/complete.
   useEffect(() => {
     let cancelled = false;
 
@@ -1130,12 +1125,6 @@ export default function FlashcardsPage() {
       if (error || !user) {
         console.warn("[Flashcards] No session – redirecting to /login");
         router.replace("/login");
-        return;
-      }
-
-      if (localStorage.getItem(ONBOARDING_KEY) !== "true") {
-        console.log("[Flashcards] Onboarding incomplete – redirecting");
-        router.replace("/onboarding/welcome");
         return;
       }
 

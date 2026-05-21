@@ -26,9 +26,6 @@ import { supabase } from "../../../../lib/supabaseClient";
 // Backend base URL from public env (never hardcoded host).
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8001";
 
-// Same onboarding flag every other page uses.
-const ONBOARDING_KEY = "ascendai_onboarding_completed";
-
 export default function AuthCallbackCompletePage() {
   const router = useRouter();
 
@@ -91,12 +88,27 @@ export default function AuthCallbackCompletePage() {
       if (cancelled) return;
 
       // STEP 4 — route to onboarding or dashboard.
-      const onboardingComplete =
-        localStorage.getItem(ONBOARDING_KEY) === "true";
+      // Check Supabase profiles table to determine if
+      // onboarding is complete — works on every device
+      try {
+        // Load this user's profile row from Supabase (synced across devices)
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("full_name, study_start_time")
+          .eq("user_id", session.user.id)
+          .single();
 
-      if (onboardingComplete) {
-        router.replace("/dashboard");
-      } else {
+        // If profile exists with full_name — onboarding is done
+        if (profile && profile.full_name) {
+          // Returning student — go to dashboard
+          router.replace("/dashboard");
+        } else {
+          // No profile or missing name — show onboarding welcome
+          router.replace("/onboarding/welcome");
+        }
+      } catch (err) {
+        // If check fails default to onboarding to be safe
+        console.error("[AuthCallback] Profile check failed:", err);
         router.replace("/onboarding/welcome");
       }
     };

@@ -72,10 +72,6 @@ import SubjectBadge from "../../components/SubjectBadge";
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────
 
-// localStorage flag the onboarding sets. The dashboard, notes,
-// flashcards and now this page all read the same key.
-const ONBOARDING_KEY = "ascendai_onboarding_completed";
-
 // localStorage key the onboarding writes the user's study window
 // to. Used to pre-fill the modal's "start time" default so adding
 // a session matches the student's preferred study window.
@@ -1763,15 +1759,6 @@ export default function TimetablePage() {
       if (error || !user) {
         console.warn("[Timetable] No session – redirecting to /login");
         router.replace("/login");
-        return;
-      }
-
-      if (
-        typeof window !== "undefined" &&
-        window.localStorage.getItem(ONBOARDING_KEY) !== "true"
-      ) {
-        console.log("[Timetable] Onboarding incomplete – redirecting");
-        router.replace("/onboarding/welcome");
         return;
       }
 

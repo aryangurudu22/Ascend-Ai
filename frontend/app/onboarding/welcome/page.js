@@ -8,6 +8,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "../../../lib/supabaseClient";
 import { SUBJECTS } from "../../../lib/subjects";
 import SubjectBadge from "../../components/SubjectBadge";
 import {
@@ -20,12 +21,40 @@ import {
 export default function OnboardingWelcome() {
   const router = useRouter();
 
-  // Redirect to dashboard if onboarding was already completed.
+  // Skip onboarding when profiles row already has full_name (works on every device).
   useEffect(() => {
-    const completed = localStorage.getItem("ascendai_onboarding_completed");
-    if (completed === "true") {
-      router.push("/dashboard");
-    }
+    let cancelled = false;
+
+    const checkProfile = async () => {
+      // Read the signed-in session from Supabase auth.
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (cancelled) return;
+
+      // Only query profiles when we have a logged-in user.
+      if (session) {
+        // Load this user's profile to see if onboarding is already done.
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("user_id", session.user.id)
+          .single();
+
+        if (cancelled) return;
+
+        // If profile exists with full_name — onboarding is done.
+        if (profile && profile.full_name) {
+          router.replace("/dashboard");
+          return;
+        }
+      }
+    };
+
+    checkProfile();
+
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   return (

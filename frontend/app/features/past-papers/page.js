@@ -92,10 +92,6 @@ import SubjectBadge from "../../components/SubjectBadge";
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────
 
-// localStorage flag the onboarding sets — same key the rest of
-// the app reads.
-const ONBOARDING_KEY = "ascendai_onboarding_completed";
-
 // Where the future POST /past-papers/solve endpoint will live.
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
@@ -2647,15 +2643,6 @@ export default function PastPapersPage() {
       if (error || !user) {
         console.warn("[PastPapers] No session – redirecting to /login");
         router.replace("/login");
-        return;
-      }
-
-      if (
-        typeof window !== "undefined" &&
-        window.localStorage.getItem(ONBOARDING_KEY) !== "true"
-      ) {
-        console.log("[PastPapers] Onboarding incomplete – redirecting");
-        router.replace("/onboarding/welcome");
         return;
       }
 

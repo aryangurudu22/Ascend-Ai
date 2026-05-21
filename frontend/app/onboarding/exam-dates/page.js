@@ -19,7 +19,6 @@ import {
 } from "../onboarding-ui";
 
 const ONBOARDING_DATA_KEY = "ascendai_onboarding_data";
-const ONBOARDING_COMPLETED_KEY = "ascendai_onboarding_completed";
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
 
 const buildInitialDates = () =>
@@ -49,12 +48,6 @@ export default function OnboardingExamDates() {
       console.warn("[ExamDates] Failed to parse stored onboarding data", e);
     }
   }, []);
-
-  useEffect(() => {
-    if (localStorage.getItem(ONBOARDING_COMPLETED_KEY) === "true") {
-      router.push("/dashboard");
-    }
-  }, [router]);
 
   const handleDateChange = (subjectKey, value) => {
     setExamDates((prev) => ({ ...prev, [subjectKey]: value }));

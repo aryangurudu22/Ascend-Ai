@@ -43,11 +43,6 @@ import { staggerContainer, staggerItem } from "../../lib/animations";
 // one place if the rule ever changes. Nothing here is a real
 // piece of subject or note data — those come from the database.
 
-// localStorage key that the onboarding flow sets to "true" on the
-// final step. Same key the dashboard reads. Defined once so we
-// never re-type it (no hardcoded strings scattered around).
-const ONBOARDING_KEY = "ascendai_onboarding_completed";
-
 // FastAPI backend base URL. Pulled from .env.local. We fall back
 // to localhost so the page still works during local development
 // even if the env var is missing.
@@ -896,16 +891,15 @@ export default function NotesPage() {
   }, [existingCardTitles]);
 
   // ───────────────────────────────────────────────────────────
-  // EFFECT 1 — Auth + onboarding guard.
+  // EFFECT 1 — Auth guard (client-side fallback).
   // ───────────────────────────────────────────────────────────
-  // Runs once on mount. Mirrors the dashboard's pattern exactly:
+  // Runs once on mount:
   //
   //   1. Ask Supabase who the current user is. If there's no
   //      session, redirect to /login. (The proxy already does
   //      this server-side; this client-side check is a fallback.)
-  //   2. Read the onboarding completion flag from localStorage.
-  //      If it isn't "true", redirect to /onboarding/welcome.
-  //   3. Otherwise mark the page ready to render.
+  //   2. Otherwise mark the page ready to render.
+  //      Onboarding redirect is handled by auth/callback/complete.
   useEffect(() => {
     let cancelled = false;
 
@@ -924,14 +918,7 @@ export default function NotesPage() {
         return;
       }
 
-      // Onboarding flag check (localStorage – the proxy cannot see it).
-      if (localStorage.getItem(ONBOARDING_KEY) !== "true") {
-        console.log("[Notes] Onboarding incomplete – redirecting");
-        router.replace("/onboarding/welcome");
-        return;
-      }
-
-      console.log("[Notes] Auth + onboarding OK – rendering page");
+      console.log("[Notes] Auth OK – rendering page");
       // Cache the verified user id so the per-note Generate
       // handler can build its request body without another
       // call to supabase.auth.getUser().

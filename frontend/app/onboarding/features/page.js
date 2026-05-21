@@ -9,14 +9,13 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Pencil, FileText, Layers, Calendar, BookOpen } from "lucide-react";
+import { supabase } from "../../../lib/supabaseClient";
 import {
   OnboardingShell,
   OnboardingHeading,
   OnboardingSubheading,
   ContinueButton,
 } from "../onboarding-ui";
-
-const ONBOARDING_KEY = "ascendai_onboarding_completed";
 
 const FEATURES = [
   {
@@ -49,17 +48,48 @@ const FEATURES = [
 export default function OnboardingFeatures() {
   const router = useRouter();
 
+  // Skip this step when profiles row already has full_name (works on every device).
   useEffect(() => {
-    const alreadyCompleted = localStorage.getItem(ONBOARDING_KEY) === "true";
-    if (alreadyCompleted) {
-      console.log("[OnboardingFeatures] Onboarding already done – redirecting to /dashboard");
-      router.replace("/dashboard");
-    }
+    let cancelled = false;
+
+    const checkProfile = async () => {
+      // Read the signed-in session from Supabase auth.
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (cancelled) return;
+
+      // Only query profiles when we have a logged-in user.
+      if (session) {
+        // Load this user's profile to see if onboarding is already done.
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("user_id", session.user.id)
+          .single();
+
+        if (cancelled) return;
+
+        // If profile exists with full_name — onboarding is done.
+        if (profile && profile.full_name) {
+          console.log(
+            "[OnboardingFeatures] Profile complete – redirecting to /dashboard",
+          );
+          router.replace("/dashboard");
+          return;
+        }
+      }
+    };
+
+    checkProfile();
+
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   const completeOnboarding = () => {
-    localStorage.setItem(ONBOARDING_KEY, "true");
-    console.log("[OnboardingFeatures] Flag set – navigating to /dashboard via router.push");
+    // Profiles table already holds onboarding data from earlier steps.
+    console.log("[OnboardingFeatures] Navigating to /dashboard");
     router.push("/dashboard");
   };
 
