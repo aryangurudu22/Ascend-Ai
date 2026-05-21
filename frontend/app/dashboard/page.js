@@ -728,34 +728,44 @@ export default function DashboardPage() {
       }
       setExamDates(mergedExams);
 
+      setLoading(false);
+
       const token = session.access_token;
 
       // STEP 1 — one dashboard-summary call, then show dashboard immediately
       if (token && authUser.id) {
         const { weekStart, weekEnd } = getWeekDates();
 
-        const dashboardData = await fetchDashboardData(
+        // Single consolidated fetch — replaces four separate API round trips
+        const dashData = await fetchDashboardData(
           authUser.id,
           token,
           weekStart,
           weekEnd,
         );
 
-        setWeekEntries(dashboardData.entries);
-        setLatestNotes(dashboardData.notes);
+        // Set timetable entries from the consolidated response
+        setWeekEntries(dashData.entries);
+        // Set notes from the consolidated response
+        setLatestNotes(dashData.notes);
+        // Set exam intelligence from the consolidated response
+        setExamIntelligence(dashData.examIntelligence || []);
+        // Set questions asked count from the consolidated response
+        setQuestionsAsked(dashData.questionsAsked || 0);
+        // Set week bounds for stats filtering
         setWeekBounds({
-          start: dashboardData.weekStart,
-          end: dashboardData.weekEnd,
+          start: dashData.weekStart,
+          end: dashData.weekEnd,
         });
-
+        // Build initial checked sessions map from entries
         const initialChecked = {};
-        for (const e of dashboardData.entries) {
+        for (const e of dashData.entries) {
           if (e.is_completed) initialChecked[e.id] = true;
         }
         setCheckedSessions(initialChecked);
 
-        const intelRows = dashboardData.examIntelligence || [];
-        setExamIntelligence(intelRows);
+        // Merge server exam dates into local fallback map when present
+        const intelRows = dashData.examIntelligence || [];
         if (intelRows.length > 0) {
           setExamDates((prev) => {
             const merged = { ...prev };
@@ -766,11 +776,9 @@ export default function DashboardPage() {
           });
         }
 
-        setQuestionsAsked(dashboardData.questionsAsked ?? 0);
-        setHomeworkRows(dashboardData.homeworkRows);
+        // homeworkRows kept empty — count lives in questionsAsked from summary
+        setHomeworkRows(dashData.homeworkRows);
       }
-
-      setLoading(false);
 
       // STEP 2 — profile safety-net only (exam intel + counts come from STEP 1)
       secondaryTimerId = setTimeout(async () => {
