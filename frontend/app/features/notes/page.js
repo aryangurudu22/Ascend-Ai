@@ -660,6 +660,8 @@ function NoteCard({ note, subjectMeta, generateState, onGenerate }) {
         display: "flex",
         flexDirection: "column",
         transition: "background 200ms ease, border-color 200ms ease",
+        overflow: "hidden",
+        minWidth: 0,
       }}
     >
       {subjectMeta && <SubjectBadge subject={subjectMeta} />}
@@ -699,7 +701,8 @@ function NoteCard({ note, subjectMeta, generateState, onGenerate }) {
           display: expanded ? "block" : "-webkit-box",
           WebkitLineClamp: expanded ? undefined : 3,
           WebkitBoxOrient: "vertical",
-          overflow: expanded ? "visible" : "hidden",
+          overflow: "hidden",
+          wordBreak: "break-word",
         }}
       >
         {cleanSummary}

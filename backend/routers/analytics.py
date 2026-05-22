@@ -847,53 +847,43 @@ def _normalise_exam_dates_json(raw: Any) -> Dict[str, str]:
 
 def _load_exam_dates_for_user(user_id: str) -> Dict[str, str]:
     """
-    Step 1 — Load exam_dates JSON from user_profiles (spec) or profiles.
-
-    Step 2 — Fill any missing subjects from the shared subjects table
-    (same source onboarding uses when user_profiles is absent).
+    Load exam dates for a user from the subjects table.
+    Each subject row has an exam_date column per user.
+    This replaces the old broken approach of reading from profiles.exam_dates
+    which never existed in the database.
     """
-
     dates: Dict[str, str] = {}
-
-    # Try user_profiles first (spec), then profiles as a safe fallback.
-    for table in (USER_PROFILES_TABLE, PROFILES_TABLE):
-        try:
-            result = (
-                supabase.table(table)
-                .select("exam_dates")
-                .eq("user_id", user_id)
-                .limit(1)
-                .execute()
-            )
-            rows = getattr(result, "data", None) or []
-            if rows and rows[0].get("exam_dates") is not None:
-                parsed = _normalise_exam_dates_json(rows[0]["exam_dates"])
-                dates.update(parsed)
-                if dates:
-                    return dates
-        except Exception as e:
-            print(
-                f"[Analytics] exam_dates read from {table} failed: "
-                f"{type(e).__name__}: {e}"
-            )
-
-    # Shared subjects.exam_date column (tenant-wide fallback).
     try:
-        result = supabase.table(SUBJECTS_TABLE).select("code, exam_date").execute()
-        for row in getattr(result, "data", None) or []:
+        # Query subjects table filtered by user_id — this is where exam dates live
+        result = (
+            supabase.table(SUBJECTS_TABLE)
+            .select("code, name, exam_date")
+            .eq("user_id", user_id)
+            .eq("is_active", True)
+            .not_.is_("exam_date", "null")
+            .execute()
+        )
+        rows = getattr(result, "data", None) or []
+        for row in rows:
+            # Map by subject code first
             code = str(row.get("code") or "").strip()
             exam_value = row.get("exam_date")
-            if not code or not exam_value:
+            if not exam_value:
                 continue
+            # Try code-based mapping first
             subject_key = SUBJECT_CODE_TO_KEY.get(code)
-            if subject_key and subject_key not in dates:
+            if subject_key:
                 dates[subject_key] = str(exam_value)[:10]
+                continue
+            # Fall back to name-based mapping
+            raw_name = str(row.get("name") or "").strip().lower()
+            first_word = raw_name.split()[0] if raw_name else ""
+            aliases = {"information": "ict"}
+            name_key = aliases.get(first_word, first_word)
+            if name_key in SUBJECT_KEYS:
+                dates[name_key] = str(exam_value)[:10]
     except Exception as e:
-        print(
-            f"[Analytics] subjects exam_date fallback failed: "
-            f"{type(e).__name__}: {e}"
-        )
-
+        print(f"[Analytics] exam_dates load failed: {type(e).__name__}: {e}")
     return dates
 
 
