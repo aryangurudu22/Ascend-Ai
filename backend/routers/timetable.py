@@ -961,9 +961,11 @@ def _generate_timetable_for_user(
         # with `scheduled_date >= today`. We keep the past so old
         # records stay intact; only the future gets wiped.
         try:
+            # Delete ALL entries for this user — past and future
+            # This ensures no stale entries from previous generations remain
             supabase.table(ENTRIES_TABLE).delete().eq(
                 "user_id", user_id
-            ).gte("scheduled_date", today_iso).execute()
+            ).execute()
         except Exception as e:
             # Failure here is logged but NOT fatal — Groq can
             # still try and we'll insert alongside the existing
