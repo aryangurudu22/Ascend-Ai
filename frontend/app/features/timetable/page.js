@@ -2679,10 +2679,6 @@ export default function TimetablePage() {
   const weekRangeLabel = formatWeekRange(currentWeekStart);
   const totalStudyHours = (entries.length * 1.5).toFixed(1);
 
-  const handleAddSessionComingSoon = () => {
-    setToast({ tone: "success", message: "Coming soon" });
-  };
-
   return (
     <main style={{ minHeight: "100vh", background: "var(--bg)" }}>
       <style>{`
@@ -2827,7 +2823,7 @@ export default function TimetablePage() {
                   sessions={list}
                   subjectIndex={subjectIndex}
                   onToggleSession={handleToggleCompletion}
-                  onAddSession={handleAddSessionComingSoon}
+                  onAddSession={openAddModal}
                 />
               );
             })}
