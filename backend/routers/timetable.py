@@ -1149,6 +1149,12 @@ def _generate_timetable_for_user(
 
     # ── STEP 10: parse the JSON array ──────────────────────
     entries_raw, parse_ok = _parse_groq_entries(raw_answer)
+    # Filter out any entries Groq generated before today
+    # Groq sometimes starts from Monday even when told to start from today
+    entries_raw = [
+        e for e in entries_raw
+        if str(e.get("date") or "")[:10] >= today_iso
+    ]
     if not parse_ok:
         # We couldn't extract any valid JSON. Log the raw text so
         # an engineer can inspect, but never return it to the
