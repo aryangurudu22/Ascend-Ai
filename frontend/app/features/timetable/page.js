@@ -2133,10 +2133,16 @@ export default function TimetablePage() {
         return;
       }
 
-      // Fallback — backend responded 200 but with no entries
-      // saved AND no "already exists" hint.
-      setGenerateStatus("error");
-      setGenerateMsg("Could not generate timetable — please try again");
+      // If force regenerate returned 0 entries — Groq had trouble, ask user to retry
+      if (forceThisCall) {
+        setGenerateStatus("error");
+        setGenerateMsg("Generation timed out — please try again");
+        return;
+      }
+      // First click with no existing entries — send force_regenerate on next click
+      setPendingRegenerate(true);
+      setGenerateStatus("success");
+      setGenerateMsg("Click Generate Now again to create your timetable.");
     } catch (err) {
       // Network throw (most often: backend offline).
       console.warn("[Timetable] /timetable/generate failed:", err);
